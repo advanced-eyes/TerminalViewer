@@ -2,9 +2,9 @@
 
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/CellMetrics.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/TerminalPlatform.h"
+#include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "TerminalViewer/Thread/TerminalRenderThread.h"
 #include "TerminalViewer/UI/TerminalSurfaceNative.h"
-#include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "ScopedEnv.h"
 #include "TestFonts.h"
 
