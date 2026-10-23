@@ -87,10 +87,10 @@ cmake --build build && ctest --test-dir build --output-on-failure
 
 | 환경 변수(개발용) | 뜻 |
 | --- | --- |
-| `OCEAN_VK_DISABLE=1` | Vulkan 이 없는 환경을 흉내 낸다(터미널은 CPU 로 그린다) |
-| `OCEAN_VK_VALIDATION=1` | Vulkan SDK 로더로 검증 레이어를 켠다 |
+| `TERMINALVIEWER_VK_DISABLE=1` | Vulkan 이 없는 환경을 흉내 낸다(터미널은 CPU 로 그린다) |
+| `TERMINALVIEWER_VK_VALIDATION=1` | Vulkan SDK 로더로 검증 레이어를 켠다 |
 
-- 이름은 Ocean 그대로 둔다(테스트와 Ocean README 가 이 이름을 쓴다). 로그 · 경고 문구도 그대로다(예: `Terminal renderer: GPU unavailable, drawing with CPU: …`, GPU 를 끈 빌드의 이유 문구 `…(OCEAN_TERMINAL_GPU=OFF)`).
+- 이름은 라이브러리 이름을 따른다(§10, Ocean 에서 쓰던 이름은 읽지 않는다). 그 밖의 로그 · 경고 문구는 Ocean 그대로다(예: `Terminal renderer: GPU unavailable, drawing with CPU: …`, GPU 를 끈 빌드의 이유 문구 `…(OCEAN_TERMINAL_GPU=OFF)`).
 - 앱 옵션 `--terminal-renderer <auto|cpu>` 를 읽는 것(`ParseTerminalRendererMode`)은 Ocean 에 남는다. 라이브러리는 그 결과(`ETerminalRendererMode`)만 받는다.
 
 ## 6. Ocean 에 붙이는 모양(단위 B)
@@ -195,6 +195,7 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
   - include 경로: `"Algorithm/…"` → `"TerminalViewer/Algorithm/…"` 등. `TerminalRenderThread.cpp` 의 `pch.h` 를 뺐다.
   - `IAlgorithm` · `IStrategy` · `Channel` 을 `namespace TerminalViewer` 에 넣었다(§3).
   - 컴파일 정의 `OCEAN_TERMINAL_GPU` → `TERMINALVIEWER_GPU`. 문구는 그대로다(§5).
+  - 개발용 환경 변수: `OCEAN_VK_DISABLE` → `TERMINALVIEWER_VK_DISABLE`, `OCEAN_VK_VALIDATION` → `TERMINALVIEWER_VK_VALIDATION`(옛 이름은 읽지 않는다). 이 이름이 든 경고 문구도 따라 바뀐다(예: `Vulkan: TERMINALVIEWER_VK_VALIDATION=1 but …`).
   - 셰이더 리소스: `:/shaders/` → `:/terminalviewer/shaders/`, qrc 이름 `shaders.qrc` → `TerminalViewerShaders.qrc`, `Q_INIT_RESOURCE` 추가(§6).
   - CMake: 전역 `CMAKE_*` 대신 타깃 속성. 셰이더 스크립트의 `ocean_` 함수 · 변수 이름을 `terminalviewer_` 로. Vulkan 대상 · FetchContent 이름을 겹치지 않게 바꿨다(버전 · URL · 해시는 그대로).
   - 테스트: `Core/BundledFonts.h` → `TestFonts.h`, `TerminalSurfaceTest` 의 Ocean 의존 3개를 뺐다(나머지 단언은 그대로).

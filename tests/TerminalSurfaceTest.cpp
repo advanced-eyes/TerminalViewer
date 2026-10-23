@@ -481,7 +481,7 @@ private slots:
     void vulkanMissingFallsBackToCpu()
     {
         // 성공 기준 8: Vulkan 이 없으면 GPU 화면을 CPU 로 바꿔 달라고 하고, 핸들을 한 번 놓고, 앱은 계속 돈다
-        ScopedEnv disable("OCEAN_VK_DISABLE", "1");
+        ScopedEnv disable("TERMINALVIEWER_VK_DISABLE", "1");
         FakeFrameSource source(kCols, kRows, 0);
         FakeFrameSource cpuSource(kCols, kRows, 0);
         std::atomic<int> iReleases{0};

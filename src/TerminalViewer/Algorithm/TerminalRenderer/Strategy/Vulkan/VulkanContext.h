@@ -68,7 +68,7 @@ public:
     QString GetDeviceName() const;
     QString GetLibraryUsed() const;
     bool IsValidationEnabled() const;   // 인스턴스에 검증 레이어를 실제로 켰다
-    // 검증 레이어가 낸 경고·오류 수(프로세스 전체, OCEAN_VK_VALIDATION=1 일 때만 늘어난다)
+    // 검증 레이어가 낸 경고·오류 수(프로세스 전체, TERMINALVIEWER_VK_VALIDATION=1 일 때만 늘어난다)
     static int GetValidationMessageCount();
 
 private:

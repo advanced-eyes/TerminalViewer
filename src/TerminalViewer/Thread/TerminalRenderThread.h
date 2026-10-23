@@ -123,7 +123,7 @@ public:
 public:
     // 새 화면을 GPU 위젯으로 만들지 정할 때 본다. AUTO 면 GPU 를 쓸 수 없게 될 때까지(시도하기 전에도) GPU,
     // CPU 모드·GPU 를 끈 빌드·네이티브 화면을 만들 수 없는 QPA(offscreen, Linux)·Vulkan 라이브러리를 열 수 없는 환경
-    // (OCEAN_VK_DISABLE=1 포함, 만들 때 열고 닫아 본다)·GPU 실패 뒤에는 CPU.
+    // (TERMINALVIEWER_VK_DISABLE=1 포함, 만들 때 열고 닫아 본다)·GPU 실패 뒤에는 CPU.
     // (SetGpuStrategyFactory 로 GPU Strategy 를 넣어 준 테스트·도구는 QPA 와 상관없이 GPU)
     ETerminalRenderStrategy GetActiveStrategy() const;
     QString GetGpuError() const;     // GPU 를 쓸 수 없게 된 이유(시작 실패·장치 잃음). 없으면 빈 문자열

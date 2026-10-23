@@ -143,7 +143,7 @@ bool VulkanContext::Initialize(QString* pError)
         }
         else
         {
-            qWarning("Vulkan: OCEAN_VK_VALIDATION=1 but %s is not available via %s; validation off", kValidationLayerName,
+            qWarning("Vulkan: TERMINALVIEWER_VK_VALIDATION=1 but %s is not available via %s; validation off", kValidationLayerName,
                      qPrintable(m_strLibrary));
         }
     }

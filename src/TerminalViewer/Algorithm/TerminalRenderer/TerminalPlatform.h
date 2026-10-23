@@ -5,6 +5,6 @@
 // 함께 보므로 Algorithm 층에 둔다. 아무 스레드에서나 부른다(QGuiApplication::platformName 만 읽는다).
 bool IsNativeSurfaceSupported();
 
-// Vulkan 라이브러리를 열 수 있는가(OCEAN_VK_DISABLE=1 이면 거짓, GPU 를 끈 빌드도 거짓). GPU 를 시도하기 전에 AUTO 가
+// Vulkan 라이브러리를 열 수 있는가(TERMINALVIEWER_VK_DISABLE=1 이면 거짓, GPU 를 끈 빌드도 거짓). GPU 를 시도하기 전에 AUTO 가
 // CPU 로 알릴지 정할 때 쓴다. 라이브러리를 열고 닫아 보기만 한다: Vulkan 함수를 부르지 않고 인스턴스를 만들지 않는다.
 bool IsGpuLibraryAvailable();

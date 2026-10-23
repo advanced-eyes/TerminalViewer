@@ -137,12 +137,12 @@ public:
 private:
     static void Handle(QtMsgType type, const QMessageLogContext& context, const QString& message)
     {
-        if (type == QtWarningMsg && message.startsWith(QStringLiteral("Vulkan: OCEAN_VK_VALIDATION=1 but VK_LAYER_KHRONOS_validation is not available")))
+        if (type == QtWarningMsg && message.startsWith(QStringLiteral("Vulkan: TERMINALVIEWER_VK_VALIDATION=1 but VK_LAYER_KHRONOS_validation is not available")))
         {
             ++s_iLayerMissing;
             return;
         }
-        if (type == QtWarningMsg && message.startsWith(QStringLiteral("Vulkan: OCEAN_VK_VALIDATION=1 but no Vulkan loader was found")))
+        if (type == QtWarningMsg && message.startsWith(QStringLiteral("Vulkan: TERMINALVIEWER_VK_VALIDATION=1 but no Vulkan loader was found")))
         {
             ++s_iLoaderMissing;
             return;
@@ -287,7 +287,7 @@ private slots:
     void cleanupTestCase()
     {
         m_upContext.reset();
-        // 검증 레이어를 켠 실행(OCEAN_VK_VALIDATION=1)에서 경고·오류가 하나도 없어야 한다(Review Focus 4)
+        // 검증 레이어를 켠 실행(TERMINALVIEWER_VK_VALIDATION=1)에서 경고·오류가 하나도 없어야 한다(Review Focus 4)
         QCOMPARE(VulkanContext::GetValidationMessageCount(), m_iValidationBefore);
     }
 
@@ -575,14 +575,14 @@ private slots:
         m_upContext->ReleaseAtlasTexture(&cache);
     }
 
-    // OCEAN_VK_VALIDATION=1 이어도 인스턴스에 검증 레이어를 켜지 못했으면 "검증 꺼짐" 으로 알린다
+    // TERMINALVIEWER_VK_VALIDATION=1 이어도 인스턴스에 검증 레이어를 켜지 못했으면 "검증 꺼짐" 으로 알린다
     void validationReportsOffWhenLayerMissing()
     {
         if (!m_upContext)
             QSKIP("Vulkan 장치 없음");
         QTemporaryDir emptyLayerDir;
         QVERIFY(emptyLayerDir.isValid());
-        ScopedEnv validation("OCEAN_VK_VALIDATION", "1");
+        ScopedEnv validation("TERMINALVIEWER_VK_VALIDATION", "1");
         ScopedEnv layerPath("VK_LAYER_PATH", QFile::encodeName(emptyLayerDir.path()));   // 검증 레이어 매니페스트를 못 찾게 한다
         QString strError;
         std::unique_ptr<VulkanContext> upContext;
@@ -638,7 +638,7 @@ private slots:
 
     void rendererFallsBackWhenVulkanDisabled()
     {
-        ScopedEnv disable("OCEAN_VK_DISABLE", "1");
+        ScopedEnv disable("TERMINALVIEWER_VK_DISABLE", "1");
         TerminalRenderer renderer;
         QTest::ignoreMessage(QtWarningMsg, GpuUnavailableWarning());
         renderer.SetStrategy(ETerminalRenderStrategy::GPU);
@@ -648,26 +648,26 @@ private slots:
 
     void disabledByEnvironment()
     {
-        ScopedEnv disable("OCEAN_VK_DISABLE", "1");
+        ScopedEnv disable("TERMINALVIEWER_VK_DISABLE", "1");
         QString strLibrary;
         bool bValidation = true;
         QVERIFY(LoadVulkanLibrary(&strLibrary, &bValidation) == nullptr);
         QVERIFY(!bValidation);
-        QVERIFY(strLibrary.contains(QStringLiteral("OCEAN_VK_DISABLE")));
+        QVERIFY(strLibrary.contains(QStringLiteral("TERMINALVIEWER_VK_DISABLE")));
 
         QString strError;
         std::unique_ptr<VulkanContext> upContext = VulkanContext::Create(&strError);
         QVERIFY(!upContext);
         QVERIFY(!strError.isEmpty());
-        QVERIFY(strError.contains(QStringLiteral("OCEAN_VK_DISABLE")));
+        QVERIFY(strError.contains(QStringLiteral("TERMINALVIEWER_VK_DISABLE")));
     }
 
-    // AUTO 가 GPU 를 시도하기 전에 CPU 로 알릴지 정하는 검사(GUI 스레드에서 부른다): OCEAN_VK_DISABLE=1 이면 거짓,
+    // AUTO 가 GPU 를 시도하기 전에 CPU 로 알릴지 정하는 검사(GUI 스레드에서 부른다): TERMINALVIEWER_VK_DISABLE=1 이면 거짓,
     // 아니면 로더가 라이브러리를 열 수 있는지와 같다(라이브러리를 열고 닫기만 한다)
     void gpuLibraryProbeFollowsLoader()
     {
         {
-            ScopedEnv disable("OCEAN_VK_DISABLE", "1");
+            ScopedEnv disable("TERMINALVIEWER_VK_DISABLE", "1");
             QVERIFY(!IsGpuLibraryAvailable());
         }
         QString strLibrary;

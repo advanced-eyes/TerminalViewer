@@ -944,7 +944,7 @@ public:
     }
 
     // AUTO 는 GPU 를 쓸 수 없게 될 때까지 GPU 로 알린다(새 화면을 GPU 위젯으로 만들게). 단 GPU 를 끈 빌드, 네이티브 화면
-    // (CAMetalLayer/HWND)을 만들 수 없는 QPA, Vulkan 라이브러리를 열 수 없는 환경(OCEAN_VK_DISABLE=1 포함)이면 처음부터 CPU 다:
+    // (CAMetalLayer/HWND)을 만들 수 없는 QPA, Vulkan 라이브러리를 열 수 없는 환경(TERMINALVIEWER_VK_DISABLE=1 포함)이면 처음부터 CPU 다:
     // GPU 위젯을 만들었다 바로 바꿔 끼우면 그 사이 모든 조상 위젯이 네이티브가 되어 세션 내내 남는다.
     // 라이브러리는 AUTO 이고 네이티브 화면을 만들 수 있을 때만 열고 닫아 본다(인스턴스는 만들지 않는다. GUI 스레드에서 부른다).
     // GPU Strategy 를 넣어 준 테스트·도구는 GPU 다.

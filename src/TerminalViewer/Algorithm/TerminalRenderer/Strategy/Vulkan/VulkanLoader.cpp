@@ -18,8 +18,8 @@
 
 namespace
 {
-constexpr const char* kDisableVariable = "OCEAN_VK_DISABLE";
-constexpr const char* kValidationVariable = "OCEAN_VK_VALIDATION";
+constexpr const char* kDisableVariable = "TERMINALVIEWER_VK_DISABLE";
+constexpr const char* kValidationVariable = "TERMINALVIEWER_VK_VALIDATION";
 constexpr const char* kGetInstanceProcAddrName = "vkGetInstanceProcAddr";
 
 constexpr const char* kSdkVariable = "VULKAN_SDK";

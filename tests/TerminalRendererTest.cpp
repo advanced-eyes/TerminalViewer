@@ -111,11 +111,11 @@ private slots:
         QVERIFY(!renderer.Execute(unknown, out));
     }
 
-    // GPU 를 만들 수 없으면(Vulkan 없음을 OCEAN_VK_DISABLE=1 로 흉내, 또는 GPU 를 끈 빌드) CPU 로 남는다.
+    // GPU 를 만들 수 없으면(Vulkan 없음을 TERMINALVIEWER_VK_DISABLE=1 로 흉내, 또는 GPU 를 끈 빌드) CPU 로 남는다.
     // Vulkan 이 있을 때 GPU 로 바뀌는 것은 VulkanRendererTest 가 본다.
     void gpuStaysCpuWithoutVulkan()
     {
-        ScopedEnv disable("OCEAN_VK_DISABLE", "1");
+        ScopedEnv disable("TERMINALVIEWER_VK_DISABLE", "1");
         TerminalRenderer renderer;
         QCOMPARE(renderer.GetStrategy(), ETerminalRenderStrategy::CPU);
         QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("^Terminal renderer: GPU unavailable, drawing with CPU: ")));
