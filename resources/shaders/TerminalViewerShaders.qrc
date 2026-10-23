@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<!-- TerminalViewer: 터미널 GPU 렌더러의 SPIR-V 셰이더(TERMINALVIEWER_GPU=ON 일 때만 넣는다). VulkanContext 가 :/terminalviewer/shaders/terminal.*.spv 를 읽는다.
+     정적 라이브러리의 qrc 는 저절로 붙지 않아 VulkanContext 가 셰이더를 처음 읽기 전에 Q_INIT_RESOURCE(TerminalViewerShaders) 를 부른다.
+     원본(terminal.vert, terminal.frag)을 고치면 tools/shaders/BuildShaders.cmake 로 다시 만든다. -->
+<RCC version="1.0">
+    <qresource prefix="/terminalviewer/shaders">
+        <file>terminal.vert.spv</file>
+        <file>terminal.frag.spv</file>
+    </qresource>
+</RCC>

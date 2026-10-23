@@ -1,0 +1,11 @@
+<!DOCTYPE RCC>
+<!-- TerminalViewer 테스트 전용: Cascadia Mono Regular/Bold/Italic/BoldItalic(SIL OFL 1.1, OFL.txt). TestFonts::Register 가 :/terminalviewer/testfonts/CascadiaMono-*.ttf 를 등록한다.
+     라이브러리 타깃에는 넣지 않는다(Ocean 이 :/fonts/ 로 같은 글꼴을 이미 넣는다). -->
+<RCC version="1.0">
+    <qresource prefix="/terminalviewer/testfonts">
+        <file>CascadiaMono-Regular.ttf</file>
+        <file>CascadiaMono-Bold.ttf</file>
+        <file>CascadiaMono-Italic.ttf</file>
+        <file>CascadiaMono-BoldItalic.ttf</file>
+    </qresource>
+</RCC>

@@ -1,0 +1,8 @@
+# 셰이더 원본은 구성할 때 SHA256 을 shaders.sha256 과 비교하므로 LF 로 고정한다(Windows 체크아웃 포함). SPIR-V 는 바이너리.
+resources/shaders/*.vert text eol=lf
+resources/shaders/*.frag text eol=lf
+resources/shaders/shaders.sha256 text eol=lf
+resources/shaders/*.spv binary
+
+# 테스트용 글꼴
+*.ttf binary
