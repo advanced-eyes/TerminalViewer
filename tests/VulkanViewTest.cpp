@@ -8,7 +8,7 @@
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/GlyphCache.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/Strategy/Vulkan/VulkanContext.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/Strategy/Vulkan/VulkanView.h"
-#include "FakeFrameSource.h"
+#include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "TestFonts.h"
 
 #include <QElapsedTimer>

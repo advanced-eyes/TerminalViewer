@@ -4,7 +4,7 @@
 #include "TerminalViewer/Algorithm/TerminalRenderer/TerminalPlatform.h"
 #include "TerminalViewer/Thread/TerminalRenderThread.h"
 #include "TerminalViewer/UI/TerminalSurfaceNative.h"
-#include "FakeFrameSource.h"
+#include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "ScopedEnv.h"
 #include "TestFonts.h"
 

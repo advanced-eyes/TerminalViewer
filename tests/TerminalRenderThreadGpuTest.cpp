@@ -3,7 +3,7 @@
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/CellMetrics.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/FrameScheduler.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/GlyphCache.h"
-#include "FakeFrameSource.h"
+#include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "TestFonts.h"
 
 #include <QElapsedTimer>

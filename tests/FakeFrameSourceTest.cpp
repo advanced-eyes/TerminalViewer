@@ -1,4 +1,4 @@
-#include "FakeFrameSource.h"
+#include "TerminalViewer/Testing/FakeFrameSource.h"
 
 #include <QTest>
 #include <map>

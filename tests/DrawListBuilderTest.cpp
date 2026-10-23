@@ -1,6 +1,6 @@
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/DrawListBuilder.h"
 
-#include "FakeFrameSource.h"
+#include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "TestFonts.h"
 
 #include <QTest>

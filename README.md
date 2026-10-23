@@ -37,9 +37,9 @@ TerminalViewer/
 │   ├── Thread/             Channel.h (namespace TerminalViewer) · TerminalRenderThread
 │   └── UI/                 TerminalSurface · TerminalSurfaceNative.h · TerminalSurfaceMac.mm
 ├── tests/                  TerminalViewerTests (Qt Test)
-│   ├── Support/            FakeFrameSource — 테스트 · 도구용 화면 공급원(TerminalViewerTestSupport 타깃)
+│   ├── Support/TerminalViewer/Testing/   FakeFrameSource — 테스트 · 도구용 화면 공급원(TerminalViewerTestSupport 타깃, `<TerminalViewer/Testing/FakeFrameSource.h>`)
 │   ├── fonts/              Cascadia Mono 4개 + OFL.txt + TestFonts.qrc (테스트 실행 파일에만 넣는다)
-│   └── TestMain.cpp · TestFonts.* · ScopedEnv.h · *Test.cpp
+│   └── TestMain.cpp · TestMainTest.cmake · TestFonts.* · ScopedEnv.h · *Test.cpp
 └── docs/                   CppConvention.md · Qt.md · Patterns.md(Ocean docs/ 에서 복사) · ThirdParty.md
 ```
 
@@ -70,8 +70,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$(br
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-- CTest: `TerminalViewerTests`(Qt Test 전체, `QT_QPA_PLATFORM=offscreen`), GPU 를 켜면 `TerminalViewerShaderHashTest` 도.
-- 클래스 하나만: `build/TerminalViewerTests CellMetricsTest`. 클래스 이름 뒤의 인자는 Qt Test 에 넘긴다. MinGW Qt 는 콘솔에 결과를 잘 쓰지 않으니 `-o 결과.txt,txt` 로 받거나 `ctest --output-on-failure` 로 돈다.
+- CTest: `TerminalViewerTests`(Qt Test 전체, `QT_QPA_PLATFORM=offscreen`), `TerminalViewerTestMainTest`(첫 인자 처리 시험, `tests/TestMainTest.cmake`), GPU 를 켜면 `TerminalViewerShaderHashTest` 도.
+- 클래스 하나만: `build/TerminalViewerTests CellMetricsTest`. 클래스 이름 뒤의 인자는 Qt Test 에 넘긴다. 모르는 클래스 이름이면(옵션을 클래스 이름보다 먼저 쓴 경우 포함) 아무것도 돌리지 않고 클래스 목록을 표준 오류에 찍은 뒤 1 로 끝난다. MinGW Qt 는 콘솔에 결과를 잘 쓰지 않으니 `-o 결과.txt,txt` 로 받거나 `ctest --output-on-failure` 로 돈다.
 - 직접 실행할 때(Windows): `QT_QPA_PLATFORM=offscreen`, `PATH` 앞에 Qt `bin` 과 MinGW `bin`, `QT_QPA_FONTDIR=C:/Windows/Fonts` 를 준다(ctest 는 이것을 스스로 정한다).
 - 테스트용 글꼴(Cascadia Mono)은 테스트 실행 파일에만 들어간다(`:/terminalviewer/testfonts/`, `TestFonts::Register()`).
 
@@ -122,7 +122,7 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
 | 타깃 | 별칭 | 내용 |
 | --- | --- | --- |
 | `TerminalViewer` (STATIC) | `TerminalViewer::TerminalViewer` | 라이브러리. PUBLIC: include 폴더 `src/`, `Qt5::Core/Gui/Widgets`, C++17, (GPU) `TERMINALVIEWER_GPU=1` · Vulkan 대상 · (macOS) QuartzCore · AppKit |
-| `TerminalViewerTestSupport` (STATIC, `EXCLUDE_FROM_ALL`) | `TerminalViewer::TestSupport` | `FakeFrameSource`. 테스트 옵션과 상관없이 정의한다. 링크하는 대상이 있을 때만 만든다. include: `#include <FakeFrameSource.h>` |
+| `TerminalViewerTestSupport` (STATIC, `EXCLUDE_FROM_ALL`) | `TerminalViewer::TestSupport` | `FakeFrameSource`. 테스트 옵션과 상관없이 정의한다. 링크하는 대상이 있을 때만 만든다. include: `#include <TerminalViewer/Testing/FakeFrameSource.h>`(파일은 `tests/Support/TerminalViewer/Testing/`) |
 | `TerminalViewerVulkanHeaders` · `TerminalViewerVkBootstrap` · `TerminalViewerVma` | — | GPU 를 켤 때만. `TerminalViewer` 가 PUBLIC 으로 링크한다 |
 
 **부모가 돌려받는 값**(캐시 INTERNAL. `add_subdirectory` 뒤 부모 어디서나 보인다. GPU 를 끄면 빈 값)
@@ -157,7 +157,7 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
 | `Algorithm/TerminalRenderer/…` | `<TerminalViewer/Algorithm/TerminalRenderer/…>` |
 | `Thread/TerminalRenderThread.h` | `<TerminalViewer/Thread/TerminalRenderThread.h>` |
 | `UI/Common/Terminal/TerminalSurface.h`, `TerminalSurfaceNative.h` | `<TerminalViewer/UI/TerminalSurface.h>`, `<TerminalViewer/UI/TerminalSurfaceNative.h>` |
-| `tests/FakeFrameSource.h` | `<FakeFrameSource.h>` (`TerminalViewer::TestSupport`) |
+| `tests/FakeFrameSource.h` | `<TerminalViewer/Testing/FakeFrameSource.h>` (`TerminalViewer::TestSupport`) |
 | `Interface/IAlgorithm.h` · `IStrategy.h` · `Thread/Channel.h` | Ocean 것은 그대로 남는다. 라이브러리 것은 `TerminalViewer::` 안에 있어 겹치지 않는다 |
 
 - Ocean 에서 지울 것(각각 `CMakeLists.txt` 의 그 줄도): `src/Algorithm/TerminalRenderer/`, `src/Thread/TerminalRenderThread.*`, `src/UI/Common/Terminal/TerminalSurface*`, `resources/shaders/`, `cmake/CheckShaders.cmake`, `cmake/tests/ShaderHashTest.cmake`(+ `OceanShaderHashTest`), `tools/shaders/`, `cmake/OceanDependencies.cmake` 의 GPU 부분, `resources/licenses/LICENSE.MoltenVK-embedded.txt`, `tests/FakeFrameSource.*`, 옮긴 테스트 17개 클래스(`TerminalSurfaceTest` 는 아래 3개만 남긴다).

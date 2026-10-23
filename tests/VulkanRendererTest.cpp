@@ -2,7 +2,7 @@
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/SoftwareCompositor.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/TerminalPlatform.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/TerminalRenderer.h"
-#include "FakeFrameSource.h"
+#include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "ScopedEnv.h"
 #include "TestFonts.h"
 

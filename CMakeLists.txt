@@ -163,14 +163,14 @@ endfunction()
 #   테스트 옵션과 상관없이 정의하되 EXCLUDE_FROM_ALL 이다: 링크하는 대상이 있을 때만 만든다(Ocean 의 테스트·TerminalRenderDemo).
 ################################################################################
 add_library(TerminalViewerTestSupport STATIC EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/Support/FakeFrameSource.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/Support/FakeFrameSource.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/Support/TerminalViewer/Testing/FakeFrameSource.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/Support/TerminalViewer/Testing/FakeFrameSource.cpp)
 add_library(TerminalViewer::TestSupport ALIAS TerminalViewerTestSupport)
 set_target_properties(TerminalViewerTestSupport PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)
-# 쓰는 쪽은 #include <FakeFrameSource.h> 로 쓴다.
+# 쓰는 쪽은 #include <TerminalViewer/Testing/FakeFrameSource.h> 로 쓴다(tests/Support/TerminalViewer/Testing/).
 target_include_directories(TerminalViewerTestSupport PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/Support)
 target_link_libraries(TerminalViewerTestSupport PUBLIC TerminalViewer)
 target_compile_definitions(TerminalViewerTestSupport PRIVATE ${TERMINALVIEWER_COMPILE_DEFINITIONS})
@@ -198,7 +198,11 @@ if(TERMINALVIEWER_BUILD_TESTS)
     target_compile_definitions(TerminalViewerTests PRIVATE ${TERMINALVIEWER_COMPILE_DEFINITIONS})
     target_compile_options(TerminalViewerTests PRIVATE ${TERMINALVIEWER_COMPILE_OPTIONS})
     add_test(NAME TerminalViewerTests COMMAND TerminalViewerTests)
-    set_tests_properties(TerminalViewerTests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # 첫 인자(클래스 이름) 시험: 모르는 이름이면 아무것도 돌지 않으므로 실패로 끝나야 한다(tests/TestMainTest.cmake).
+    add_test(NAME TerminalViewerTestMainTest
+             COMMAND ${CMAKE_COMMAND} -DTEST_EXE=$<TARGET_FILE:TerminalViewerTests>
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/TestMainTest.cmake)
+    set_tests_properties(TerminalViewerTests TerminalViewerTestMainTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
         # 실행 파일 옆에 DLL 이 없어도 Qt DLL 과 MinGW 런타임 DLL 을 찾게 Qt bin 폴더와 컴파일러 폴더를 PATH 앞에 둔다.
         # 콘솔 창 없이 돌면(IDE 등에서 부른 ctest) Qt Test 는 결과를 OutputDebugString 으로만 보내므로 QT_FORCE_STDERR_LOGGING 으로 출력에 남긴다.
@@ -210,7 +214,7 @@ if(TERMINALVIEWER_BUILD_TESTS)
             list(APPEND TERMINALVIEWER_TEST_ENVIRONMENT "PATH=path_list_prepend:${TERMINALVIEWER_MINGW_BIN_DIR}")
         endif()
         list(APPEND TERMINALVIEWER_TEST_ENVIRONMENT "QT_FORCE_STDERR_LOGGING=set:1" "QT_QPA_FONTDIR=set:${TERMINALVIEWER_WINDOWS_FONT_DIR}")
-        set_tests_properties(TerminalViewerTests PROPERTIES ENVIRONMENT_MODIFICATION "${TERMINALVIEWER_TEST_ENVIRONMENT}")
+        set_tests_properties(TerminalViewerTests TerminalViewerTestMainTest PROPERTIES ENVIRONMENT_MODIFICATION "${TERMINALVIEWER_TEST_ENVIRONMENT}")
     endif()
     if(TERMINALVIEWER_GPU)
         # 셰이더 해시 검사(cmake/CheckShaders.cmake)가 원본이 한 글자만 바뀌어도 멈추는지 시험한다.
