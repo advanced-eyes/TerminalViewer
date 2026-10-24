@@ -115,7 +115,7 @@ bool VulkanContext::Initialize(QString* pError)
     // (VK_EXT_metal_surface / VK_KHR_win32_surface)를 켜고, 로더가 VK_KHR_portability_enumeration 을 알리면
     // (macOS 의 SDK 로더) 그 확장과 ENUMERATE_PORTABILITY 플래그도 켠다.
     vkb::InstanceBuilder instanceBuilder(fpGetInstanceProcAddr);
-    instanceBuilder.set_app_name("Ocean").set_engine_name("Ocean").require_api_version(kApiMajor, kApiMinor, 0);
+    instanceBuilder.set_app_name("TerminalViewer").set_engine_name("TerminalViewer").require_api_version(kApiMajor, kApiMinor, 0);
     const vkb::Result<vkb::SystemInfo> systemResult = vkb::SystemInfo::get_system_info(fpGetInstanceProcAddr);
 #if defined(__APPLE__)
     // present scaling(스펙 §8): 크기를 바꾸는 동안 옛 프레임이 늘어나지 않고 위 왼쪽에 붙게 한다. 확장이 없으면 켜지 않는다.

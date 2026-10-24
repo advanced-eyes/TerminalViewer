@@ -121,6 +121,12 @@ private slots:
         QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("^Terminal renderer: GPU unavailable, drawing with CPU: ")));
         renderer.SetStrategy(ETerminalRenderStrategy::GPU);
         QCOMPARE(renderer.GetStrategy(), ETerminalRenderStrategy::CPU);
+#ifdef TERMINALVIEWER_GPU
+        QVERIFY(!renderer.GetGpuError().isEmpty());
+#else
+        // GPU 를 끈 빌드의 이유 문구는 라이브러리 옵션 이름을 쓴다.
+        QCOMPARE(renderer.GetGpuError(), QStringLiteral("GPU 렌더러 없이 만든 빌드다(TERMINALVIEWER_GPU=OFF)"));
+#endif
     }
 };
 

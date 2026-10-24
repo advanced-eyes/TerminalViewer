@@ -9,7 +9,7 @@ endif()
 # 테스트는 이 저장소를 따로 빌드할 때만 만든다. Ocean 이 서브모듈로 붙이면 OFF 다(README §6).
 option(TERMINALVIEWER_BUILD_TESTS "Build unit tests (Qt Test)" ${PROJECT_IS_TOP_LEVEL})
 # Windows 에서는 GPU 렌더러를 켠 빌드를 아직 확인하지 않았다: 확인할 때까지 기본은 OFF 다(-DTERMINALVIEWER_GPU=ON 으로 켤 수 있다).
-# 부모 프로젝트가 같은 이름의 일반 변수를 먼저 정하면 그 값을 쓴다(CMP0077 NEW, 예: Ocean 이 OCEAN_TERMINAL_GPU 를 넘긴다).
+# 부모 프로젝트가 같은 이름의 일반 변수를 먼저 정하면 그 값을 쓴다(CMP0077 NEW, 예: 부모 프로젝트가 자기 GPU 옵션 값을 넘긴다).
 if(WIN32)
     set(TERMINALVIEWER_GPU_DEFAULT OFF)
 else()
@@ -139,7 +139,7 @@ set(TERMINALVIEWER_MOLTENVK_EMBEDDED_LICENSE "${TERMINALVIEWER_MOLTENVK_EMBEDDED
     "Notice for code statically linked into libMoltenVK.dylib (macOS + GPU only)")
 
 # 배포물에 넣을 서드파티 라이선스 전문을 Ocean 과 같은 이름으로 설치한다. GPU 를 끈 구성에서는 아무것도 하지 않는다.
-#   예: terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
+#   예: terminalviewer_install_licenses(<부모의 라이선스 설치 폴더>)
 function(terminalviewer_install_licenses destination)
     if(TERMINALVIEWER_VKBOOTSTRAP_LICENSE)
         install(FILES ${TERMINALVIEWER_VKBOOTSTRAP_LICENSE} DESTINATION ${destination} RENAME LICENSE.vk-bootstrap-MIT)

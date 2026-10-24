@@ -90,31 +90,46 @@ cmake --build build && ctest --test-dir build --output-on-failure
 | `TERMINALVIEWER_VK_DISABLE=1` | Vulkan 이 없는 환경을 흉내 낸다(터미널은 CPU 로 그린다) |
 | `TERMINALVIEWER_VK_VALIDATION=1` | Vulkan SDK 로더로 검증 레이어를 켠다 |
 
-- 이름은 라이브러리 이름을 따른다(§10, Ocean 에서 쓰던 이름은 읽지 않는다). 그 밖의 로그 · 경고 문구는 Ocean 그대로다(예: `Terminal renderer: GPU unavailable, drawing with CPU: …`, GPU 를 끈 빌드의 이유 문구 `…(OCEAN_TERMINAL_GPU=OFF)`).
+- 이름은 라이브러리 이름을 따른다(§10, Ocean 에서 쓰던 이름은 읽지 않는다). 문구에 든 이름도 같다: GPU 를 끈 빌드의 이유 문구(`GetGpuError`)는 `GPU 렌더러 없이 만든 빌드다(TERMINALVIEWER_GPU=OFF)` 이고, Vulkan 인스턴스의 앱 · 엔진 이름(드라이버 · 검증 레이어에 보인다)은 `TerminalViewer` 다. 그 밖의 로그 · 경고 문구는 옮겨 온 그대로다(예: `Terminal renderer: GPU unavailable, drawing with CPU: …`).
 - 앱 옵션 `--terminal-renderer <auto|cpu>` 를 읽는 것(`ParseTerminalRendererMode`)은 Ocean 에 남는다. 라이브러리는 그 결과(`ETerminalRendererMode`)만 받는다.
 
-## 6. Ocean 에 붙이는 모양(단위 B)
+## 6. Ocean 에 붙인 모양(단위 B)
+
+Ocean 은 이 저장소를 서브모듈로 붙여 쓴다. 아래의 `OCEAN_*` · `Ocean*` 이름은 Ocean 의 옵션 · 변수 · 대상이다(이 라이브러리는 그 이름을 모른다).
 
 ```
 Ocean/
+├── .gitmodules                [submodule "external/TerminalViewer"] url = ../TerminalViewer.git
 ├── external/TerminalViewer/   git 서브모듈
 └── CMakeLists.txt
 ```
 
+Ocean `CMakeLists.txt` 에서 이 라이브러리에 닿는 줄(간추림):
+
 ```cmake
-# OCEAN_TERMINAL_GPU 를 정한 뒤, OceanCore 를 만들기 전에
+# Ocean 의 GPU 옵션 OCEAN_TERMINAL_GPU 를 정한 뒤, OceanCore 를 만들기 전에
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/external/TerminalViewer/CMakeLists.txt)
+    message(FATAL_ERROR "external/TerminalViewer is empty: run 'git submodule update --init' ...")
+endif()
 set(TERMINALVIEWER_GPU ${OCEAN_TERMINAL_GPU})          # 일반 변수로 넘긴다(CMP0077 NEW)
 add_subdirectory(external/TerminalViewer)
 target_link_libraries(OceanCore PUBLIC TerminalViewer::TerminalViewer)
 
-# Ocean 테스트(applicationForwardsRendererEvents)와 tools/TerminalRenderDemo 만
-target_link_libraries(OceanTests PRIVATE TerminalViewer::TestSupport)
-target_link_libraries(TerminalRenderDemo PRIVATE TerminalViewer::TestSupport)
+# macOS + GPU: MoltenVK 를 앱 번들에 넣는다. TerminalRenderDemo 도 같은 POST_BUILD 복사를 한다.
+if(APPLE AND OCEAN_TERMINAL_GPU)
+    add_custom_command(TARGET Ocean POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_BUNDLE_CONTENT_DIR:Ocean>/Frameworks
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TERMINALVIEWER_MOLTENVK_DYLIB} $<TARGET_BUNDLE_CONTENT_DIR:Ocean>/Frameworks/libMoltenVK.dylib
+        VERBATIM)
+    install(FILES ${TERMINALVIEWER_MOLTENVK_DYLIB} DESTINATION Ocean.app/Contents/Frameworks)
+endif()
 
-# 설치: 지금 Ocean 이 OCEAN_TERMINAL_GPU 일 때 하는 라이선스 설치 대신
+# 설치: GPU 서드파티 라이선스. GPU 를 끄면 아무것도 하지 않는다.
 terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
-# macOS: 지금의 ${OCEAN_MOLTENVK_DYLIB} 대신
-#   ${TERMINALVIEWER_MOLTENVK_DYLIB} 를 Ocean.app/TerminalRenderDemo.app 의 Contents/Frameworks 에 복사 · 설치
+
+# FakeFrameSource 를 쓰는 것만: 도구(OCEAN_BUILD_TOOLS)와 테스트(OCEAN_BUILD_TESTS, TerminalRendererBindingTest)
+target_link_libraries(TerminalRenderDemo PRIVATE OceanCore TerminalViewer::TestSupport)
+target_link_libraries(OceanTests PRIVATE OceanCore Qt5::Test TerminalViewer::TestSupport)
 ```
 
 **링크 타깃**
@@ -127,43 +142,44 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
 
 **부모가 돌려받는 값**(캐시 INTERNAL. `add_subdirectory` 뒤 부모 어디서나 보인다. GPU 를 끄면 빈 값)
 
-| 변수 / 함수 | 뜻 | 지금 Ocean 에서 바꿀 것 |
+| 변수 / 함수 | 뜻 | Ocean 이 쓰는 곳 |
 | --- | --- | --- |
-| `TERMINALVIEWER_MOLTENVK_DYLIB` | macOS + GPU: `libMoltenVK.dylib` 경로 | `OCEAN_MOLTENVK_DYLIB` (CMakeLists.txt 144–151, 233–239줄) |
-| `TERMINALVIEWER_VKBOOTSTRAP_LICENSE` | vk-bootstrap `LICENSE.txt` | `${vkbootstrap_SOURCE_DIR}/LICENSE.txt` |
-| `TERMINALVIEWER_VMA_LICENSE` | VulkanMemoryAllocator `LICENSE.txt` | `${vulkanmemoryallocator_SOURCE_DIR}/LICENSE.txt` |
-| `TERMINALVIEWER_VULKANHEADERS_LICENSE` | Vulkan-Headers `LICENSES/Apache-2.0.txt` | `${vulkanheaders_SOURCE_DIR}/LICENSES/Apache-2.0.txt` |
-| `TERMINALVIEWER_MOLTENVK_LICENSE` | macOS + GPU: MoltenVK `LICENSE` | `${moltenvk_SOURCE_DIR}/LICENSE` |
-| `TERMINALVIEWER_MOLTENVK_EMBEDDED_LICENSE` | macOS + GPU: `resources/licenses/LICENSE.MoltenVK-embedded.txt` | Ocean `resources/licenses/LICENSE.MoltenVK-embedded.txt` |
-| `terminalviewer_install_licenses(<폴더>)` | 위 파일을 지금 Ocean 과 같은 이름(`LICENSE.vk-bootstrap-MIT` · `LICENSE.VulkanMemoryAllocator-MIT` · `LICENSE.Vulkan-Headers` · `LICENSE.MoltenVK-Apache-2.0` · `LICENSE.MoltenVK-embedded.txt`)으로 설치한다 | CMakeLists.txt 175–183줄 |
+| `TERMINALVIEWER_MOLTENVK_DYLIB` | macOS + GPU: `libMoltenVK.dylib` 경로 | `Ocean` · `TerminalRenderDemo` 번들에 복사(POST_BUILD), `Ocean.app/Contents/Frameworks` 에 설치(위) |
+| `TERMINALVIEWER_VKBOOTSTRAP_LICENSE` | vk-bootstrap `LICENSE.txt` | 직접 읽지 않는다(`terminalviewer_install_licenses` 가 쓴다) |
+| `TERMINALVIEWER_VMA_LICENSE` | VulkanMemoryAllocator `LICENSE.txt` | 〃 |
+| `TERMINALVIEWER_VULKANHEADERS_LICENSE` | Vulkan-Headers `LICENSES/Apache-2.0.txt` | 〃 |
+| `TERMINALVIEWER_MOLTENVK_LICENSE` | macOS + GPU: MoltenVK `LICENSE` | 〃 |
+| `TERMINALVIEWER_MOLTENVK_EMBEDDED_LICENSE` | macOS + GPU: `resources/licenses/LICENSE.MoltenVK-embedded.txt` | 〃 |
+| `terminalviewer_install_licenses(<폴더>)` | 위 파일을 옮기기 전 Ocean 이 설치하던 것과 같은 이름(`LICENSE.vk-bootstrap-MIT` · `LICENSE.VulkanMemoryAllocator-MIT` · `LICENSE.Vulkan-Headers` · `LICENSE.MoltenVK-Apache-2.0` · `LICENSE.MoltenVK-embedded.txt`)으로 설치한다 | `terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})`(`licenses`, macOS 는 `Ocean.app/Contents/Resources/licenses`) |
 
 - 셰이더 해시 검사(`CheckShaders.cmake`)는 GPU 를 켜면 서브모듈로 붙어도 구성 때 돈다. 셰이더는 `:/terminalviewer/shaders/` 에 들어간다(Ocean 의 `:/shaders/` 와 겹치지 않게). 정적 라이브러리의 qrc 는 저절로 붙지 않아 `VulkanContext` 가 셰이더를 처음 읽기 전에 `Q_INIT_RESOURCE(TerminalViewerShaders)` 를 부른다.
-- 라이브러리는 글꼴을 갖지 않는다. Ocean 은 지금처럼 `:/fonts/` 로 Cascadia Mono 를 넣고 등록한다.
-- include: Ocean 에게 이 라이브러리는 외부 라이브러리다. `docs/CppConvention.md` §9 대로 `<>` 로 쓰고 외부 라이브러리 묶음에 둔다.
+- 라이브러리는 글꼴을 갖지 않는다. Ocean 은 `:/fonts/` 로 Cascadia Mono 를 넣고 `BundledFonts` 로 등록한다.
+- include: Ocean 에게 이 라이브러리는 외부 라이브러리다. `docs/CppConvention.md` §9 대로 `<>` 로 쓰고 외부 라이브러리 묶음에 둔다. 예: Ocean `src/Core/Application.cpp` 의 앞부분(간추림)
 
 ```cpp
+#include "pch.h"
 #include "Core/Application.h"
 
-#include "Core/Observers.h"
-
 #include <TerminalViewer/Thread/TerminalRenderThread.h>
-#include <QString>
+#include <QApplication>
 
-#include <memory>
+#include "Core/BundledFonts.h"
 ```
 
-| Ocean 경로(지금) | TerminalViewer 경로 |
+옮긴 기록(Ocean 의 include 경로):
+
+| 옮기기 전 Ocean 경로 | TerminalViewer 경로 |
 | --- | --- |
 | `Algorithm/TerminalRenderer/…` | `<TerminalViewer/Algorithm/TerminalRenderer/…>` |
 | `Thread/TerminalRenderThread.h` | `<TerminalViewer/Thread/TerminalRenderThread.h>` |
 | `UI/Common/Terminal/TerminalSurface.h`, `TerminalSurfaceNative.h` | `<TerminalViewer/UI/TerminalSurface.h>`, `<TerminalViewer/UI/TerminalSurfaceNative.h>` |
 | `tests/FakeFrameSource.h` | `<TerminalViewer/Testing/FakeFrameSource.h>` (`TerminalViewer::TestSupport`) |
-| `Interface/IAlgorithm.h` · `IStrategy.h` · `Thread/Channel.h` | Ocean 것은 그대로 남는다. 라이브러리 것은 `TerminalViewer::` 안에 있어 겹치지 않는다 |
+| `Interface/IAlgorithm.h` · `IStrategy.h` · `Thread/Channel.h` | 옮기지 않았다. Ocean 것은 그대로 있고, 라이브러리 것은 `TerminalViewer::` 안에 있어 겹치지 않는다 |
 
-- Ocean 에서 지울 것(각각 `CMakeLists.txt` 의 그 줄도): `src/Algorithm/TerminalRenderer/`, `src/Thread/TerminalRenderThread.*`, `src/UI/Common/Terminal/TerminalSurface*`, `resources/shaders/`, `cmake/CheckShaders.cmake`, `cmake/tests/ShaderHashTest.cmake`(+ `OceanShaderHashTest`), `tools/shaders/`, `cmake/OceanDependencies.cmake` 의 GPU 부분, `resources/licenses/LICENSE.MoltenVK-embedded.txt`, `tests/FakeFrameSource.*`, 옮긴 테스트 17개 클래스(`TerminalSurfaceTest` 는 아래 3개만 남긴다).
-- Ocean 에 남는 것: `TerminalThemeMapper`(`MakeTerminalTheme` · `ParseTerminalRendererMode`), `Application` 의 연결 코드, `Observers::TerminalRendererFellBack`, `tools/TerminalRenderDemo.cpp`, Ocean 의 `IAlgorithm` · `IStrategy` · `Channel`, `TerminalSurfaceTest` 의 `rendererModeOption` · `terminalThemeFollowsPalette` · `applicationForwardsRendererEvents`, Cascadia Mono 글꼴과 `BundledFonts`.
-- Ocean 코드의 `#ifdef OCEAN_TERMINAL_GPU`(지금 `tools/TerminalRenderDemo.cpp`)는 Ocean 이 계속 그 정의를 넣거나 라이브러리가 내보내는 `TERMINALVIEWER_GPU` 로 바꾼다.
-- 받기: `git clone --recurse-submodules`, 이미 받았으면 `git submodule update --init`. Ocean `README.md` 의 빌드 절에 적는다.
+- Ocean 에서 지운 것(`CMakeLists.txt` 의 그 줄도): `src/Algorithm/TerminalRenderer/`, `src/Thread/TerminalRenderThread.*`, `TerminalSurface*`(`TerminalSurface` · `TerminalSurfaceNative.h` · `TerminalSurfaceMac.mm`), `resources/shaders/`, `cmake/CheckShaders.cmake`, `cmake/tests/ShaderHashTest.cmake`(+ `OceanShaderHashTest`), `tools/shaders/`, `cmake/OceanDependencies.cmake` 의 GPU 부분, `resources/licenses/LICENSE.MoltenVK-embedded.txt`, `tests/FakeFrameSource.*`, 이 저장소로 옮긴 테스트 16개 클래스(`TerminalSurfaceTest` 포함. `ChannelTest` 는 Ocean 의 `Channel` 을 보므로 Ocean 에도 남는다).
+- Ocean 에 남은 것: `TerminalThemeMapper`(`src/UI/Common/Terminal/`, `MakeTerminalTheme` · `ParseTerminalRendererMode`), `Application` 의 연결 코드(`ConnectTerminalRenderThread`: `StrategyChanged` → `Observers::TerminalRendererFellBack`, `ThemeChanged` → `SetTheme`), `tools/TerminalRenderDemo.cpp`, Ocean 의 `IAlgorithm` · `IStrategy` · `Channel`, Cascadia Mono 글꼴과 `BundledFonts`, 그리고 `tests/TerminalRendererBindingTest.cpp`: 옛 `TerminalSurfaceTest` 의 Ocean 의존 3개(`rendererModeOption` · `terminalThemeFollowsPalette` · `applicationForwardsRendererEvents`)를 맡는다.
+- Ocean 코드는 Vulkan 코드가 있는지를 이 라이브러리가 PUBLIC 으로 내보내는 `TERMINALVIEWER_GPU` 로 안다(`tools/TerminalRenderDemo.cpp` 의 `#ifdef TERMINALVIEWER_GPU`). Ocean 은 `OCEAN_TERMINAL_GPU` 를 컴파일 정의로 넣지 않는다.
+- 받기: `git clone --recurse-submodules`, 이미 받았으면 `git submodule update --init`(Ocean `README.md` 의 "받기"). 서브모듈이 비어 있으면 Ocean 구성이 멈춘다(위 `FATAL_ERROR`). 이 저장소를 고치면 여기서 커밋한 뒤 Ocean 에서 서브모듈을 그 커밋으로 올린다(`git -C external/TerminalViewer pull`, `git add external/TerminalViewer`).
 
 ## 7. 순서
 
@@ -194,12 +210,14 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
 - 옮기며 바꾼 것(동작은 같다):
   - include 경로: `"Algorithm/…"` → `"TerminalViewer/Algorithm/…"` 등. `TerminalRenderThread.cpp` 의 `pch.h` 를 뺐다.
   - `IAlgorithm` · `IStrategy` · `Channel` 을 `namespace TerminalViewer` 에 넣었다(§3).
-  - 컴파일 정의 `OCEAN_TERMINAL_GPU` → `TERMINALVIEWER_GPU`. 문구는 그대로다(§5).
+  - 컴파일 정의 `OCEAN_TERMINAL_GPU` → `TERMINALVIEWER_GPU`. 이 이름이 든 문구는 그때는 그대로 두었다(옮긴 뒤 바꿨다, 아래).
   - 셰이더 리소스: `:/shaders/` → `:/terminalviewer/shaders/`, qrc 이름 `shaders.qrc` → `TerminalViewerShaders.qrc`, `Q_INIT_RESOURCE` 추가(§6).
   - CMake: 전역 `CMAKE_*` 대신 타깃 속성. 셰이더 스크립트의 `ocean_` 함수 · 변수 이름을 `terminalviewer_` 로. Vulkan 대상 · FetchContent 이름을 겹치지 않게 바꿨다(버전 · URL · 해시는 그대로).
   - 테스트: `Core/BundledFonts.h` → `TestFonts.h`, `TerminalSurfaceTest` 의 Ocean 의존 3개를 뺐다(나머지 단언은 그대로).
 - 옮긴 뒤 바꾼 것(쓰는 쪽이 알아야 한다):
   - 개발용 환경 변수: `OCEAN_VK_DISABLE` → `TERMINALVIEWER_VK_DISABLE`, `OCEAN_VK_VALIDATION` → `TERMINALVIEWER_VK_VALIDATION`(옛 이름은 읽지 않는다). 이 이름이 든 경고 문구도 따라 바뀐다(예: `Vulkan: TERMINALVIEWER_VK_VALIDATION=1 but …`).
+  - GPU 를 끈 빌드의 이유 문구(`TerminalRenderer` · `TerminalRenderThread` 의 `GetGpuError`, 그것을 붙인 CPU 대체 경고, Ocean 에서는 `Observers::TerminalRendererFellBack` 의 이유): `GPU 렌더러 없이 만든 빌드다(OCEAN_TERMINAL_GPU=OFF)` → `GPU 렌더러 없이 만든 빌드다(TERMINALVIEWER_GPU=OFF)`.
+  - Vulkan 인스턴스의 앱 · 엔진 이름(`VkApplicationInfo`): `Ocean` → `TerminalViewer`. 드라이버 · 검증 레이어에만 보인다.
 - Windows 의 GPU 빌드(`TERMINALVIEWER_GPU=ON`)는 아직 확인되지 않았다. Ocean 도 마찬가지다. 2026-10-24 Windows · MinGW 8.1 에서 해 본 결과(고치지 않았다):
   - vk-bootstrap v1.4.365 의 `VkBootstrap.h` 가 `<cstddef>` 없이 `std::byte` 를 써서 GCC 8.1(libstdc++ 8)에서 컴파일되지 않는다. Ocean 의 플래그(`-std=c++17 -w`)로도 같다(옮기기와 상관없다).
   - 확인만 하려고 `-DCMAKE_CXX_FLAGS="-include cstddef"` 로 따로 빌드하면 모두 컴파일되고, 이 PC 의 Vulkan 장치로 `VulkanRendererTest` 의 `mixedMatchesCpu` · `partialUploadMatchesCpu` 두 개만 실패한다. 둘 다 컬러 이모지 글리프를 기대하는데 이 환경(offscreen)에는 컬러 이모지 글꼴이 없다(다른 테스트는 같은 까닭으로 건너뛴다). 나머지는 통과한다.

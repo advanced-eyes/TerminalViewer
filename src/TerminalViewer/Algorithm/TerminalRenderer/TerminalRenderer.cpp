@@ -24,8 +24,8 @@ std::unique_ptr<ITerminalRenderStrategy> CreateDefaultGpu(QString* pError)
 #ifdef TERMINALVIEWER_GPU
     return TerminalRendererGPU::Create(pError);
 #else
-    // 문구는 Ocean 에서 옮겨 온 그대로 둔다(Ocean 은 OCEAN_TERMINAL_GPU 값을 TERMINALVIEWER_GPU 로 넘긴다).
-    *pError = QStringLiteral("GPU 렌더러 없이 만든 빌드다(OCEAN_TERMINAL_GPU=OFF)");
+    // 이유 문구는 이 라이브러리의 CMake 옵션 이름을 쓴다(부모 프로젝트는 자기 GPU 옵션 값을 TERMINALVIEWER_GPU 로 넘긴다).
+    *pError = QStringLiteral("GPU 렌더러 없이 만든 빌드다(TERMINALVIEWER_GPU=OFF)");
     return nullptr;
 #endif
 }
