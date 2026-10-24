@@ -3,7 +3,7 @@
 터미널 화면 스냅샷을 그리는 **Qt5 C++ 정적 라이브러리**. Vulkan(GPU)으로 그리고, 쓸 수 없으면 CPU 로 그린다. Ocean 의 터미널 렌더러(터미널 기능 ② 렌더러)를 떼어 냈다. Ocean 은 이 저장소를 git 서브모듈로 붙여 쓴다.
 
 - 작성일: 2026-10-24
-- 상태: 단독으로 빌드 · 테스트된다(§7 단위 A). Ocean 에 붙이고 Ocean 의 사본을 지우는 일(단위 B)은 아직이다.
+- 상태: 단독으로 빌드 · 테스트된다(§7 단위 A). Ocean 은 이 저장소를 `external/TerminalViewer` 서브모듈로 붙여 쓰고 자기 사본을 지웠다(단위 B).
 - 바탕: Ocean [터미널 GPU 렌더러 설계](../Ocean/docs/superpowers/specs/2026-10-08-terminal-renderer-design.md)와 Ocean `main` 6d539cc + 작업 트리(UI 재배치로 `src/UI/Common/Terminal/` 에 있던 판)의 코드. 로직은 그대로 옮겼다(§10).
 
 ## 1. 무엇인가
@@ -169,8 +169,8 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
 
 | 단위 | 할 일 | 끝난 기준 |
 | --- | --- | --- |
-| A | 이 저장소를 만들고 라이브러리 · 테스트 · 셰이더 · Vulkan 의존성 · 문서를 옮긴다. Ocean 은 그대로다 | `TerminalViewerTests` 통과, 클래스별 통과 수가 Ocean 과 같다(`TerminalSurfaceTest` 는 3개 적게) — 지금 |
-| B | Ocean 에 서브모듈로 붙이고 Ocean 의 사본을 지운다(§6) | 전체 `OceanTests` 통과, 동작 바뀜 없음, 설치 결과가 같다 |
+| A | 이 저장소를 만들고 라이브러리 · 테스트 · 셰이더 · Vulkan 의존성 · 문서를 옮긴다. Ocean 은 그대로다 | `TerminalViewerTests` 통과, 클래스별 통과 수가 Ocean 과 같다(`TerminalSurfaceTest` 는 3개 적게) — 끝 |
+| B | Ocean 에 서브모듈로 붙이고 Ocean 의 사본을 지운다(§6) | 전체 `OceanTests` 통과, 동작 바뀜 없음, 설치 결과가 같다 — 끝 |
 
 - 코드는 [`../CLAUDE.md`](../CLAUDE.md)의 순서를 따른다: 구현 에이전트(테스트 → 옮기기 → 통과) → 리뷰 에이전트(`docs/` 규칙으로 정리 → 통과). 옮기기는 동작을 바꾸지 않는다.
 
@@ -184,8 +184,8 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
 - Qt5 는 LGPLv3 로 쓴다: Core · Gui · Widgets 만 쓰고 **반드시 동적 링크**한다(공유 라이브러리가 아니면 구성이 멈춘다). Qt Charts · Qt Data Visualization 등 오픈소스판이 GPLv3 전용인 모듈은 쓰지 않는다.
 - GPL · AGPL · 출처 불명 코드와 에셋은 들이지 않는다. LGPL 은 동적 링크로만 쓴다. 새 의존성은 Ocean `docs/LicenseCompliance.md` §2 의 감사 절차를 밟는다.
 - 서드파티(Vulkan-Headers · vk-bootstrap · VulkanMemoryAllocator · MoltenVK)와 테스트용 Cascadia Mono 의 출처 · 해시 · 고지 의무: [docs/ThirdParty.md](docs/ThirdParty.md).
-- 이 저장소 자체의 라이선스: **정하지 않음**.
-- 원격 저장소 주소(서브모듈 URL): **정하지 않음**.
+- 이 저장소 자체의 라이선스: **MIT**([LICENSE](LICENSE)). 서드파티 · 테스트용 글꼴은 각자의 라이선스를 따른다(위).
+- 원격 저장소: `git@github.com:advanced-eyes/TerminalViewer.git`. Ocean 의 `.gitmodules` 는 상대 URL `../TerminalViewer.git` 으로 이 주소를 가리킨다.
 
 ## 10. 출처 · 바꾼 것
 
@@ -195,10 +195,11 @@ terminalviewer_install_licenses(${OCEAN_LICENSE_DESTINATION})
   - include 경로: `"Algorithm/…"` → `"TerminalViewer/Algorithm/…"` 등. `TerminalRenderThread.cpp` 의 `pch.h` 를 뺐다.
   - `IAlgorithm` · `IStrategy` · `Channel` 을 `namespace TerminalViewer` 에 넣었다(§3).
   - 컴파일 정의 `OCEAN_TERMINAL_GPU` → `TERMINALVIEWER_GPU`. 문구는 그대로다(§5).
-  - 개발용 환경 변수: `OCEAN_VK_DISABLE` → `TERMINALVIEWER_VK_DISABLE`, `OCEAN_VK_VALIDATION` → `TERMINALVIEWER_VK_VALIDATION`(옛 이름은 읽지 않는다). 이 이름이 든 경고 문구도 따라 바뀐다(예: `Vulkan: TERMINALVIEWER_VK_VALIDATION=1 but …`).
   - 셰이더 리소스: `:/shaders/` → `:/terminalviewer/shaders/`, qrc 이름 `shaders.qrc` → `TerminalViewerShaders.qrc`, `Q_INIT_RESOURCE` 추가(§6).
   - CMake: 전역 `CMAKE_*` 대신 타깃 속성. 셰이더 스크립트의 `ocean_` 함수 · 변수 이름을 `terminalviewer_` 로. Vulkan 대상 · FetchContent 이름을 겹치지 않게 바꿨다(버전 · URL · 해시는 그대로).
   - 테스트: `Core/BundledFonts.h` → `TestFonts.h`, `TerminalSurfaceTest` 의 Ocean 의존 3개를 뺐다(나머지 단언은 그대로).
+- 옮긴 뒤 바꾼 것(쓰는 쪽이 알아야 한다):
+  - 개발용 환경 변수: `OCEAN_VK_DISABLE` → `TERMINALVIEWER_VK_DISABLE`, `OCEAN_VK_VALIDATION` → `TERMINALVIEWER_VK_VALIDATION`(옛 이름은 읽지 않는다). 이 이름이 든 경고 문구도 따라 바뀐다(예: `Vulkan: TERMINALVIEWER_VK_VALIDATION=1 but …`).
 - Windows 의 GPU 빌드(`TERMINALVIEWER_GPU=ON`)는 아직 확인되지 않았다. Ocean 도 마찬가지다. 2026-10-24 Windows · MinGW 8.1 에서 해 본 결과(고치지 않았다):
   - vk-bootstrap v1.4.365 의 `VkBootstrap.h` 가 `<cstddef>` 없이 `std::byte` 를 써서 GCC 8.1(libstdc++ 8)에서 컴파일되지 않는다. Ocean 의 플래그(`-std=c++17 -w`)로도 같다(옮기기와 상관없다).
   - 확인만 하려고 `-DCMAKE_CXX_FLAGS="-include cstddef"` 로 따로 빌드하면 모두 컴파일되고, 이 PC 의 Vulkan 장치로 `VulkanRendererTest` 의 `mixedMatchesCpu` · `partialUploadMatchesCpu` 두 개만 실패한다. 둘 다 컬러 이모지 글리프를 기대하는데 이 환경(offscreen)에는 컬러 이모지 글꼴이 없다(다른 테스트는 같은 까닭으로 건너뛴다). 나머지는 통과한다.
