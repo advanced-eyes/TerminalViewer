@@ -12,12 +12,16 @@
 #include <QGuiApplication>
 #include <QPlatformSurfaceEvent>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QSignalSpy>
 #include <QTest>
+#include <QVBoxLayout>
 #include <QWindow>
+#include <QtNumeric>
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <thread>
 
@@ -27,6 +31,7 @@ constexpr int kCols = 20;
 constexpr int kRows = 5;
 constexpr int kPaddingLogical = 4;
 constexpr int kFrameTimeoutMs = 1000;
+constexpr int kGpuFrameTimeoutMs = 3000;   // Vulkan 장치 · 스왑체인을 처음 만드는 시간 포함
 constexpr int kSettleMs = 150;
 constexpr int kBlinkWindowMs = 1200;
 constexpr int kRecreateRounds = 10;
@@ -76,6 +81,15 @@ int CountId(const QSignalSpy& spy, int viewId)
     int iCount = 0;
     for (const QList<QVariant>& args : spy)
         iCount += args.at(0).toInt() == viewId ? 1 : 0;
+    return iCount;
+}
+
+// FrameStats 를 화면 id 로 센다(GPU 화면은 FrameReady 가 없다)
+int CountStats(const QSignalSpy& spy, int viewId)
+{
+    int iCount = 0;
+    for (const QList<QVariant>& args : spy)
+        iCount += args.at(0).value<TerminalFrameStats>().iViewId == viewId ? 1 : 0;
     return iCount;
 }
 
@@ -289,10 +303,137 @@ private slots:
         QVERIFY(UpdateTopLevelExposed(true, QEvent::Hide, false, true));
     }
 
+    void topLevelExposeFollowsQpa()
+    {
+        // cocoa(와 offscreen 등): 빈 영역의 Expose 는 가려짐·최소화·다른 Space 다
+        for (const QString& strPlatform : {QStringLiteral("cocoa"), QStringLiteral("offscreen"), QStringLiteral("xcb")})
+        {
+            QVERIFY(IsTopLevelExposeVisible(strPlatform, false, true));
+            QVERIFY(!IsTopLevelExposeVisible(strPlatform, true, true));
+            QVERIFY(!IsTopLevelExposeVisible(strPlatform, true, false));
+            QVERIFY(!IsTopLevelExposeVisible(strPlatform, false, false));
+        }
+        // windows: 창 안을 네이티브 자식 창(GPU 화면)이 모두 덮으면 최상위 창의 WM_PAINT 는 빈 영역의 Expose 로 오지만
+        // 창은 드러나 있다(isExposed 참). 최소화·숨김은 isExposed 거짓으로 온다
+        QVERIFY(IsTopLevelExposeVisible(QStringLiteral("windows"), false, true));
+        QVERIFY(IsTopLevelExposeVisible(QStringLiteral("windows"), true, true));
+        QVERIFY(!IsTopLevelExposeVisible(QStringLiteral("windows"), true, false));
+        QVERIFY(!IsTopLevelExposeVisible(QStringLiteral("windows"), false, false));
+    }
+
+    void gpuSurfaceFillingWindowDraws()
+    {
+        // 실제 windows QPA 에서만 돈다(ctest 는 offscreen 이라 건너뛴다. 직접:
+        //   QT_QPA_PLATFORM=windows TerminalViewerTests TerminalSurfaceTest gpuSurfaceFillingWindowDraws). 창이 잠깐 뜬다.
+        // GPU 위젯이 최상위 창을 꽉 채우면 최상위 창은 빈 영역의 Expose 만 받는다: 그래도 그 화면을 그린다
+        if (QGuiApplication::platformName() != QStringLiteral("windows"))
+            QSKIP("windows QPA only");
+        FakeFrameSource source(kCols, kRows, 0);
+        source.SetColors(kBackground, kForeground);
+        TerminalRenderThread thread(ETerminalRendererMode::AUTO);
+        if (thread.GetActiveStrategy() != ETerminalRenderStrategy::GPU)
+            QSKIP("no Vulkan device");
+        QSignalSpy spyStats(&thread, &TerminalRenderThread::FrameStats);
+        thread.SetStatsEnabled(true);
+        StartCpu(thread);
+        QWidget window;
+        QVBoxLayout* pLayout = new QVBoxLayout(&window);
+        pLayout->setContentsMargins(0, 0, 0, 0);
+        TerminalSurface* pSurface = new TerminalSurface(&thread, &source, true, &window);
+        pLayout->addWidget(pSurface);
+        window.resize(ViewSize());
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(pSurface->GetViewId() > 0);
+        QVERIFY(pSurface->IsGpu());
+        QVERIFY2(QTest::qWaitFor([&] { return CountStats(spyStats, pSurface->GetViewId()) >= 1; }, kGpuFrameTimeoutMs),
+                 "the GPU surface never drew a frame");
+        qInfo("GPU present mode %d (0 IMMEDIATE, 1 MAILBOX, 2 FIFO, 3 FIFO_RELAXED)",
+              spyStats.last().at(0).value<TerminalFrameStats>().iPresentMode);
+        source.SetCell(1, 1, BgCell(kRed));
+        const int iBefore = CountStats(spyStats, pSurface->GetViewId());
+        thread.Wake(pSurface->GetViewId());
+        QVERIFY(QTest::qWaitFor([&] { return CountStats(spyStats, pSurface->GetViewId()) > iBefore; }, kGpuFrameTimeoutMs));
+    }
+
+    void gpuSurfaceResizesAndSkipsMinimized()
+    {
+        // 실제 windows QPA 에서만 돈다(위 시험과 같다). 창 크기를 바꾸면(스왑체인을 다시 만든다) 계속 그리고,
+        // 최소화하는 동안은 그리지 않으며, 되돌리면 다시 그린다. surface 를 잃거나 CPU 로 바뀌지 않는다
+        if (QGuiApplication::platformName() != QStringLiteral("windows"))
+            QSKIP("windows QPA only");
+        FakeFrameSource source(kCols, kRows, 0);
+        source.SetColors(kBackground, kForeground);
+        TerminalRenderThread thread(ETerminalRendererMode::AUTO);
+        if (thread.GetActiveStrategy() != ETerminalRenderStrategy::GPU)
+            QSKIP("no Vulkan device");
+        QSignalSpy spyStats(&thread, &TerminalRenderThread::FrameStats);
+        QSignalSpy spyLost(&thread, &TerminalRenderThread::ViewSurfaceLost);
+        QSignalSpy spyViewFallback(&thread, &TerminalRenderThread::ViewNeedsCpuFallback);
+        thread.SetStatsEnabled(true);
+        StartCpu(thread);
+        QWidget window;
+        QVBoxLayout* pLayout = new QVBoxLayout(&window);
+        pLayout->setContentsMargins(0, 0, 0, 0);
+        TerminalSurface* pSurface = new TerminalSurface(&thread, &source, true, &window);
+        QSignalSpy spyFallback(pSurface, &TerminalSurface::CpuFallbackRequested);
+        QSignalSpy spyGrid(pSurface, &TerminalSurface::GridSizeChanged);
+        pLayout->addWidget(pSurface);
+        window.resize(ViewSize());
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        const int iView = pSurface->GetViewId();
+        QVERIFY(iView > 0);
+        // 칸 하나를 바꾸고 깨운 뒤 새 프레임을 기다린다(seed 로 칸 위치와 색을 고른다)
+        const auto funcWakeAndWait = [&](int seed)
+        {
+            const int iBefore = CountStats(spyStats, iView);
+            source.SetCell(seed % kRows, seed % kCols, BgCell(TerminalRgb{uint8_t(seed * 40), 0, 0}));
+            thread.Wake(iView);
+            return QTest::qWaitFor([&] { return CountStats(spyStats, iView) > iBefore; }, kGpuFrameTimeoutMs);
+        };
+        QVERIFY(QTest::qWaitFor([&] { return CountStats(spyStats, iView) >= 1; }, kGpuFrameTimeoutMs));
+
+        // 크기 바꿈: 커졌다 작아져도 같은 화면(id)으로 그린다
+        const QSize sizeStart = window.size();
+        for (const QSize& sizeNext : {sizeStart + QSize(120, 80), sizeStart - QSize(40, 20), sizeStart})
+        {
+            window.resize(sizeNext);
+            QTRY_COMPARE(pSurface->size(), sizeNext);
+            QVERIFY2(funcWakeAndWait(sizeNext.width()),
+                     qPrintable(QStringLiteral("no frame at %1x%2").arg(sizeNext.width()).arg(sizeNext.height())));
+            QCOMPARE(pSurface->GetViewId(), iView);
+        }
+        QVERIFY(spyGrid.count() >= 2);   // 격자가 바뀌었다고 알렸다
+
+        // 최소화: 깨워도 그리지 않는다
+        window.showMinimized();
+        QTRY_VERIFY(window.isMinimized());
+        QTest::qWait(kSettleMs);
+        const int iMinimized = CountStats(spyStats, iView);
+        source.SetCell(2, 2, BgCell(kRed));
+        thread.Wake(iView);
+        QTest::qWait(kSettleMs * 2);
+        QCOMPARE(CountStats(spyStats, iView), iMinimized);
+        // 되돌리면 다시 그린다
+        window.showNormal();
+        QVERIFY(QTest::qWaitFor([&] { return CountStats(spyStats, iView) > iMinimized; }, kGpuFrameTimeoutMs));
+        QVERIFY(funcWakeAndWait(3));
+
+        QCOMPARE(spyLost.count(), 0);
+        QCOMPARE(spyViewFallback.count(), 0);
+        QCOMPARE(spyFallback.count(), 0);
+        QCOMPARE(pSurface->GetViewId(), iView);
+    }
+
     void unexposedWindowGetsNoPatches()
     {
         // 최상위 창이 드러나 있지 않으면(최소화·가려짐·다른 Space: 빈 영역의 Expose) 위젯이 보여도 그리지 않는다.
         // 다시 드러나면(또는 창이 다시 보이면) 다시 그린다.
+        // windows QPA 는 네이티브 자식 창에 덮인 최상위 창에도 빈 영역의 Expose 를 보내므로 빈 영역만으로는 숨지 않는다
+        // (IsTopLevelExposeVisible): 그 QPA 에서는 빈 영역 흉내 부분만 빼고 최소화 · 숨김 부분을 본 뒤 끝에서 건너뜀으로 알린다.
+        // 빈 영역 · isExposed 참인 Expose 를 받으면 숨는 QPA 인가
+        const bool bEmptyExposeHides = !IsTopLevelExposeVisible(QGuiApplication::platformName(), true, true);
         FakeFrameSource source(kCols, kRows, 0);
         TerminalRenderThread thread(ETerminalRendererMode::CPU);
         QSignalSpy spyFrames(&thread, &TerminalRenderThread::FrameReady);
@@ -305,19 +446,22 @@ private slots:
         QTest::qWait(kSettleMs);
 
         QExposeEvent unexposed{QRegion()};
-        QCoreApplication::sendEvent(pWindow, &unexposed);
-        QVERIFY(surface.isVisible());
-        spyFrames.clear();
-        const int iCaptures = source.GetCaptureCount();
-        source.SetCell(1, 1, BgCell(kRed));
-        thread.Wake(iView);
-        QTest::qWait(kSettleMs);
-        QCOMPARE(CountId(spyFrames, iView), 0);
-        QCOMPARE(source.GetCaptureCount(), iCaptures);
+        if (bEmptyExposeHides)
+        {
+            QCoreApplication::sendEvent(pWindow, &unexposed);
+            QVERIFY(surface.isVisible());
+            spyFrames.clear();
+            const int iCaptures = source.GetCaptureCount();
+            source.SetCell(1, 1, BgCell(kRed));
+            thread.Wake(iView);
+            QTest::qWait(kSettleMs);
+            QCOMPARE(CountId(spyFrames, iView), 0);
+            QCOMPARE(source.GetCaptureCount(), iCaptures);
 
-        QExposeEvent exposed{QRegion(QRect(QPoint(0, 0), surface.size()))};
-        QCoreApplication::sendEvent(pWindow, &exposed);
-        QVERIFY(QTest::qWaitFor([&] { return CountId(spyFrames, iView) >= 1; }, kFrameTimeoutMs));
+            QExposeEvent exposed{QRegion(QRect(QPoint(0, 0), surface.size()))};
+            QCoreApplication::sendEvent(pWindow, &exposed);
+            QVERIFY(QTest::qWaitFor([&] { return CountId(spyFrames, iView) >= 1; }, kFrameTimeoutMs));
+        }
 
         // 최소화하면 그리지 않고(cocoa 는 빈 영역의 Expose 도 보낸다), 최소화에서 돌아오면 노출 알림 없이도(cocoa) 다시 그린다
         surface.setWindowState(Qt::WindowMinimized);
@@ -342,6 +486,8 @@ private slots:
         source.SetCell(2, 2, BgCell(kRed));
         thread.Wake(iView);
         QVERIFY(QTest::qWaitFor([&] { return CountId(spyFrames, iView) >= 1; }, kFrameTimeoutMs));
+        if (!bEmptyExposeHides)
+            QSKIP("this QPA treats an empty-region Expose as exposed (windows): only minimize and hide were checked");
     }
 
     void focusChangesReachRenderThread()
@@ -427,6 +573,9 @@ private slots:
     void gpuSurfaceWithoutNativeLayerRequestsCpu()
     {
         // offscreen QPA 는 NSView/HWND 가 없다: GPU 위젯은 붙지 않고 CPU 위젯으로 바꿔 달라고 한다
+        // (네이티브 화면이 있는 QPA(windows, cocoa)에서는 GPU 위젯이 핸들을 만들어 실제로 붙는다)
+        if (IsNativeSurfaceSupported())
+            QSKIP("this QPA has native GPU surfaces: the GPU widget attaches instead of asking for CPU");
         FakeFrameSource source(kCols, kRows, 0);
         TerminalRenderThread thread(ETerminalRendererMode::AUTO);
         StartCpu(thread);
@@ -560,6 +709,9 @@ private slots:
         QCOMPARE(spyReleased.count(), 1);
         QCOMPARE(spyReleased.at(0).at(0).value<ITerminalFrameSource*>(), static_cast<ITerminalFrameSource*>(&hiddenSource));
 
+        // 아래는 네이티브 핸들을 못 만드는 GPU 위젯이다(offscreen). 네이티브 화면이 있는 QPA 에서는 GPU 위젯이 실제로 붙는다
+        if (IsNativeSurfaceSupported())
+            QSKIP("this QPA has native GPU surfaces: only the never-shown widget was checked");
         auto upGpu = std::make_unique<TerminalSurface>(&thread, &gpuSource, true);
         QSignalSpy spyFallback(upGpu.get(), &TerminalSurface::CpuFallbackRequested);
         upGpu->resize(ViewSize());
@@ -636,6 +788,72 @@ private slots:
         QVERIFY(handle.pHandle == nullptr);
         QVERIFY(!handle.funcRelease);
         QCOMPARE(widget.internalWinId(), WId(0));
+    }
+
+    void displayRefreshRateFromPaths()
+    {
+        // Windows QueryDisplayConfig 의 활성 경로(원본 GDI 장치 이름 + 대상 주사율 유리수)에서 그 장치의 주사율을 찾는다
+        const QString strDisplay1 = QStringLiteral("\\\\.\\DISPLAY1");
+        const QString strDisplay2 = QStringLiteral("\\\\.\\DISPLAY2");
+        const QString strDisplay3 = QStringLiteral("\\\\.\\DISPLAY3");
+        const std::vector<TerminalDisplayRefreshPath> vecPaths = {
+            {strDisplay1, 10000000, 166808},   // 59.949Hz
+            {strDisplay3, 60, 0},              // 분모 0: 쓸 수 없다
+            {strDisplay2, 144000, 1000},       // 144Hz
+            {strDisplay2, 60, 1},              // 같은 원본의 두 번째 대상(복제 표시)은 앞의 것을 쓴다
+            {strDisplay3, 0, 1},               // 0Hz: 쓸 수 없다
+        };
+        QCOMPARE(FindDisplayRefreshRate(strDisplay1, vecPaths), 10000000.0 / 166808.0);
+        QCOMPARE(FindDisplayRefreshRate(QStringLiteral("\\\\.\\display2"), vecPaths), 144.0);   // 대소문자 무시
+        QCOMPARE(FindDisplayRefreshRate(strDisplay3, vecPaths), 0.0);
+        QCOMPARE(FindDisplayRefreshRate(QStringLiteral("\\\\.\\DISPLAY9"), vecPaths), 0.0);
+        QCOMPARE(FindDisplayRefreshRate(QString(), vecPaths), 0.0);
+        QCOMPARE(FindDisplayRefreshRate(strDisplay1, {}), 0.0);
+    }
+
+    void refreshRateChoice()
+    {
+        // Qt 5.15 의 Windows 는 주사율을 정수로 버린다(59.949 -> 59): 정확한 값이 Qt 값과 1Hz 안이면 정확한 값을 쓴다
+        QCOMPARE(ChooseRefreshRate(59.0, 59.949), 59.949);
+        QCOMPARE(ChooseRefreshRate(60.0, 59.94), 59.94);     // 반올림한 Qt 값이어도
+        QCOMPARE(ChooseRefreshRate(144.0, 144.0), 144.0);
+        QCOMPARE(ChooseRefreshRate(0.0, 59.949), 59.949);    // Qt 값이 없으면 정확한 값
+        // 정확한 값이 없거나 Qt 값과 1Hz 이상 다르면(다른 모니터를 잡았을 수 있다) Qt 값
+        QCOMPARE(ChooseRefreshRate(59.0, 0.0), 59.0);
+        QCOMPARE(ChooseRefreshRate(59.0, -1.0), 59.0);
+        QCOMPARE(ChooseRefreshRate(59.0, qQNaN()), 59.0);
+        QCOMPARE(ChooseRefreshRate(59.0, qInf()), 59.0);
+        QCOMPARE(ChooseRefreshRate(60.0, 144.0), 60.0);
+        QCOMPARE(ChooseRefreshRate(60.0, 61.0), 60.0);
+        QCOMPARE(ChooseRefreshRate(0.0, 0.0), 0.0);
+    }
+
+    void screenRefreshRateFollowsPlatform()
+    {
+        // windows QPA: QScreen::name() 은 GDI 장치 이름이고 QueryDisplayConfig 의 활성 경로에 있다. 위젯이 넘기는 주사율은 그
+        // 모니터의 정확한 값(이 PC 59.951Hz, Qt 는 59)이다. 그 밖의 QPA(offscreen)는 Qt 값 그대로다.
+        QCOMPARE(ScreenRefreshRate(nullptr), 0.0);
+        QScreen* pPrimary = QGuiApplication::primaryScreen();
+        QVERIFY(pPrimary);
+        if (QGuiApplication::platformName() != QStringLiteral("windows"))
+        {
+            QCOMPARE(ScreenRefreshRate(pPrimary), pPrimary->refreshRate());
+            return;
+        }
+        const std::vector<TerminalDisplayRefreshPath> vecPaths = QueryDisplayRefreshPaths();
+        QVERIFY(!vecPaths.empty());
+        for (QScreen* pScreen : QGuiApplication::screens())
+        {
+            const double dExact = FindDisplayRefreshRate(pScreen->name(), vecPaths);
+            const QString strInfo = QStringLiteral("screen %1: Qt %2 Hz, exact %3 Hz")
+                                        .arg(pScreen->name())
+                                        .arg(pScreen->refreshRate())
+                                        .arg(dExact, 0, 'f', 4);
+            QVERIFY2(pScreen->name().startsWith(QStringLiteral("\\\\.\\DISPLAY"), Qt::CaseInsensitive), qPrintable(strInfo));
+            QVERIFY2(dExact > 0.0, qPrintable(strInfo));
+            QVERIFY2(std::abs(dExact - pScreen->refreshRate()) < 1.0, qPrintable(strInfo));
+            QCOMPARE(ScreenRefreshRate(pScreen), dExact);
+        }
     }
 };
 

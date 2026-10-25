@@ -606,7 +606,8 @@ private slots:
 
     void notReadyStallRetriesWithoutBusyLoopOrFallback()
     {
-        // 표시가 오래 막혀도(펜스·이미지가 안 끝남) 잠깐의 지연일 수 있다: CPU 로 바꾸지 않고 재시도 간격(1ms)으로 다시 본다
+        // 표시가 오래 막혀도(펜스·이미지가 안 끝남) 잠깐의 지연일 수 있다: CPU 로 바꾸지 않고 재시도 간격(1ms 에서 시작해
+        // 프레임 간격의 1/4 까지)으로 다시 본다
         FakeFrameSource source(kCols, kRows, 0);
         auto spControl = std::make_shared<FakeGpuControl>();
         std::atomic<int> iReleases{0};

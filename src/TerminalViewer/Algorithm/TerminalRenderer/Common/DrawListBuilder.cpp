@@ -21,9 +21,19 @@ uint8_t MixHalf(uint8_t a, uint8_t b)
     return uint8_t((int(a) + int(b) + 1) / 2);
 }
 
-// 색 해석 순서: 반전 -> 선택 -> 흐리게
+// 최소 대비로 글자색을 고칠 칸인가: 숨김 칸(글자를 그리지 않는다)과 그림 문자(IsContrastExempt: 상자 · 블록 · Powerline 등)는
+// 고치지 않는다
+bool NeedsContrast(const TerminalCell& cell, const ContrastCache& contrast)
+{
+    return contrast.IsEnabled() && !cell.bInvisible && !IsContrastExempt(char32_t(cell.uCodepoint));
+}
+
+// 색 해석 순서: 반전 -> 선택 -> 최소 대비 -> 흐리게.
+// 대비는 흐리게 섞기 전의 색으로 재고 맞춘다: 흐린 글자는 고친 색을 배경과 반씩 섞어 여전히 보통 글자보다 흐리다.
+// (Ghostty 도 흐리게 전의 색으로 재지만 고치면 불투명 흰색 · 검정이 되어 흐리게가 사라진다. xterm.js 는 흐린 칸에 목표의
+// 절반만 요구해 보통 글자와 구분되게 한다. 여기서는 흐리게의 뜻 "보통 글자색과 배경의 반"을 그대로 지킨다)
 ResolvedColors ResolveColors(const TerminalCell& cell, bool selected, const TerminalFrame& frame,
-                             const TerminalTheme& theme)
+                             const TerminalTheme& theme, ContrastCache& contrast)
 {
     ResolvedColors colors;
     colors.fg = cell.fg;
@@ -41,6 +51,8 @@ ResolvedColors ResolveColors(const TerminalCell& cell, bool selected, const Term
         if (theme.optSelectionFg)
             colors.fg = *theme.optSelectionFg;
     }
+    if (NeedsContrast(cell, contrast))
+        colors.fg = contrast.Apply(colors.fg, colors.bg);
     if (cell.bFaint)
         colors.fg = TerminalRgb{MixHalf(colors.fg.r, colors.bg.r), MixHalf(colors.fg.g, colors.bg.g),
                                 MixHalf(colors.fg.b, colors.bg.b)};
@@ -161,7 +173,8 @@ void AddUnderline(std::vector<DrawQuad>& quads, EUnderline underline, const Term
 }
 
 void BuildRowQuads(const TerminalRow& row, const TerminalFrame& frame, const TerminalTheme& theme, GlyphCache& cache,
-                   std::vector<DrawQuad>& background, std::vector<DrawQuad>& glyphs, std::vector<DrawQuad>& decorations)
+                   ContrastCache& contrast, std::vector<DrawQuad>& background, std::vector<DrawQuad>& glyphs,
+                   std::vector<DrawQuad>& decorations)
 {
     const CellMetrics& metrics = cache.GetMetrics();
     const int iWidth = metrics.iCellWidth;
@@ -188,7 +201,7 @@ void BuildRowQuads(const TerminalRow& row, const TerminalFrame& frame, const Ter
         const TerminalCell& source = (bTail && iCol > 0 && row.vecCells[size_t(iCol - 1)].eWidth == ECellWidth::WIDE)
                                          ? row.vecCells[size_t(iCol - 1)]
                                          : cell;
-        const ResolvedColors colors = ResolveColors(source, bSelected, frame, theme);
+        const ResolvedColors colors = ResolveColors(source, bSelected, frame, theme, contrast);
 
         if (colors.bHasBg)
         {
@@ -231,7 +244,7 @@ void AddBar(std::vector<DrawQuad>& quads, int x, const CellMetrics& metrics, uin
 }
 
 void AddCursor(std::vector<DrawQuad>& quads, const TerminalFrame& frame, const TerminalTheme& theme, bool focused,
-               const TerminalRow* row, GlyphCache& cache)
+               const TerminalRow* row, GlyphCache& cache, ContrastCache& contrast)
 {
     const CellMetrics& metrics = cache.GetMetrics();
     const TerminalCursor& cursor = frame.cursor;
@@ -253,7 +266,8 @@ void AddCursor(std::vector<DrawQuad>& quads, const TerminalFrame& frame, const T
     const int iW = iSpan * metrics.iCellWidth;
     const int iH = metrics.iCellHeight;
     const int iT = metrics.iLineThickness;
-    const uint32_t uColor = PackColor(CursorColor(frame, theme));
+    const TerminalRgb cursorColor = CursorColor(frame, theme);
+    const uint32_t uColor = PackColor(cursorColor);
 
     const ECursorShape eShape = focused ? cursor.eShape : ECursorShape::BLOCK_HOLLOW;
     switch (eShape)
@@ -262,8 +276,10 @@ void AddCursor(std::vector<DrawQuad>& quads, const TerminalFrame& frame, const T
         AddRect(quads, iX, 0, iW, iH, uColor, iLimitX);
         if (pCell && !pCell->bInvisible)
         {
-            const ResolvedColors colors = ResolveColors(*pCell, IsSelected(*row, iCol), frame, theme);
-            AddCellGlyph(quads, *pCell, row->vecGraphemes, iSpan, PackColor(colors.bg), iX, cache, iLimitX);
+            // 블록 커서 위 글자는 칸의 배경색으로 커서 색 위에 그린다: 최소 대비도 그 짝(글자 = 칸 배경색, 배경 = 커서 색)으로 맞춘다
+            const ResolvedColors colors = ResolveColors(*pCell, IsSelected(*row, iCol), frame, theme, contrast);
+            const TerminalRgb glyphColor = NeedsContrast(*pCell, contrast) ? contrast.Apply(colors.bg, cursorColor) : colors.bg;
+            AddCellGlyph(quads, *pCell, row->vecGraphemes, iSpan, PackColor(glyphColor), iX, cache, iLimitX);
         }
         break;
     case ECursorShape::BAR:
@@ -282,7 +298,7 @@ void AddCursor(std::vector<DrawQuad>& quads, const TerminalFrame& frame, const T
 }
 
 void AddPreedit(std::vector<DrawQuad>& quads, const TerminalFrame& frame, const TerminalTheme& theme,
-                GlyphCache& cache)
+                GlyphCache& cache, ContrastCache& contrast)
 {
     const CellMetrics& metrics = cache.GetMetrics();
     const TerminalPreedit& preedit = *frame.optPreedit;
@@ -295,7 +311,7 @@ void AddPreedit(std::vector<DrawQuad>& quads, const TerminalFrame& frame, const 
     {
         const TerminalCell& cell = preedit.vecCells[size_t(iIndex)];
         const TerminalCell& source = (cell.eWidth == ECellWidth::SPACER_TAIL && iIndex > 0) ? preedit.vecCells[size_t(iIndex - 1)] : cell;
-        vecColors.push_back(ResolveColors(source, false, frame, theme));
+        vecColors.push_back(ResolveColors(source, false, frame, theme, contrast));
     }
     for (int iIndex = 0; iIndex < iCount; ++iIndex)
         AddRect(quads, (iStart + iIndex) * metrics.iCellWidth, 0, metrics.iCellWidth, metrics.iCellHeight,
@@ -363,6 +379,7 @@ EBuildResult DrawListBuilder::Build(const TerminalFrame& frame, const TerminalTh
         DropCache();
         m_uCacheGeneration = cache.GetGeneration();
     }
+    m_contrast.SetRatio(theme.dMinContrastRatio);   // 바뀌면 캐시를 비운다(테마가 바뀌어 행 캐시도 위에서 버렸다)
     const uint32_t uStartGeneration = cache.GetGeneration();
     const auto funcFail = [this]()
     {
@@ -393,7 +410,7 @@ EBuildResult DrawListBuilder::Build(const TerminalFrame& frame, const TerminalTh
             continue;
         }
         CachedRow cached;
-        BuildRowQuads(row, frame, theme, cache, cached.vecBackground, cached.vecGlyph, cached.vecDecoration);
+        BuildRowQuads(row, frame, theme, cache, m_contrast, cached.vecBackground, cached.vecGlyph, cached.vecDecoration);
         cached.vecCells = row.vecCells;
         cached.vecGraphemes = row.vecGraphemes;
         cached.iViewportY = row.iViewportY;
@@ -415,7 +432,7 @@ EBuildResult DrawListBuilder::Build(const TerminalFrame& frame, const TerminalTh
     };
     if (frame.optPreedit)
     {
-        AddPreedit(vecOverlay, frame, theme, cache);
+        AddPreedit(vecOverlay, frame, theme, cache, m_contrast);
         iPreeditRow = frame.cursor.iRow;
     }
     else if (frame.cursor.bVisible && cursorBlinkOn)
@@ -433,7 +450,7 @@ EBuildResult DrawListBuilder::Build(const TerminalFrame& frame, const TerminalTh
                 rowCopy.iSelectEnd = pRow->iSelectEnd;
             }
         }
-        AddCursor(vecOverlay, frame, theme, focused, pRow ? &rowCopy : nullptr, cache);
+        AddCursor(vecOverlay, frame, theme, focused, pRow ? &rowCopy : nullptr, cache, m_contrast);
         iCursorRow = frame.cursor.iRow;
     }
     if (cache.GetGeneration() != uStartGeneration)

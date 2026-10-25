@@ -6,6 +6,8 @@
 #include <QImage>
 #include <QRegion>
 
+#include <cstdint>
+
 namespace SoftwareCompositor
 {
 // target: Format_ARGB32_Premultiplied, 장치 픽셀. targetSize 가 유효하면 target 크기가 다를 때 그 크기로 다시 만들고
@@ -16,4 +18,8 @@ namespace SoftwareCompositor
 // 띠와 겹치는 모든 쿼드를 띠로 잘라 그린다. 반환: 다시 그린 영역(장치 픽셀)
 QRegion Compose(const DrawList& list, const GlyphAtlas& mono, const GlyphAtlas& color, QImage& target,
                 const QSize& targetSize = QSize());
+
+// (t + 127) / 255 (t / 255 를 반올림)와 같은 값을 나눗셈 없이 낸다. t 는 0..255*255(두 채널 값의 곱).
+// Compose 가 섞을 때 쓰는 식이다. 시험(SoftwareCompositorTest)이 전수 검사하려고 공개한다
+uint32_t DivideBy255(uint32_t t);
 }

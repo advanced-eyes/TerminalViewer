@@ -1,7 +1,7 @@
 # 서드파티 라이브러리와 에셋
 
 TerminalViewer 저장소에는 서드파티 **소스 코드**를 두지 않는다. `TERMINALVIEWER_GPU=ON` 이면 CMake 구성 단계가 감사한 버전을
-정확히 내려받는다(`cmake/TerminalViewerDependencies.cmake`). 저장소에 남긴 서드파티 파일은 테스트용 Cascadia Mono 글꼴뿐이다.
+정확히 내려받는다(`cmake/TerminalViewerDependencies.cmake`). 저장소에 남긴 서드파티 파일은 테스트 · 예제용 Cascadia Mono 글꼴뿐이다.
 
 - 이 문서의 감사 내용은 Ocean `docs/ThirdParty.md`(Ocean `main` 6d539cc + 작업 트리)의 "터미널 GPU 렌더러 의존성 (2026-10 감사)" 절과
   "Cascadia Mono" 절에서 옮겼다. 버전 · URL · SHA256 은 바꾸지 않았다.
@@ -13,7 +13,7 @@ TerminalViewer 저장소에는 서드파티 **소스 코드**를 두지 않는�
 | vk-bootstrap (`TERMINALVIEWER_GPU`) | 내려받기 | 태그 `v1.4.365` | MIT | 없음 |
 | VulkanMemoryAllocator (`TERMINALVIEWER_GPU`) | 내려받기 | 태그 `v3.4.0` | MIT | 없음 |
 | MoltenVK (`TERMINALVIEWER_GPU`, macOS) | 내려받기(미리 만든 dylib) | 릴리스 `v1.4.2` `MoltenVK-macos.tar` | Apache-2.0 (+ 정적으로 들어간 코드, 아래) | 없음 |
-| Cascadia Mono (테스트만) | 저장소 `tests/fonts/` | 2407.24 (Regular, Bold, Italic, BoldItalic, 글꼴 버전 2407.024) | OFL-1.1 | 없음 |
+| Cascadia Mono (테스트 · 예제만) | 저장소 `tests/fonts/` | 2407.24 (Regular, Bold, Italic, BoldItalic, 글꼴 버전 2407.024) | OFL-1.1 | 없음 |
 
 ## 내려받기
 
@@ -22,8 +22,10 @@ TerminalViewer 저장소에는 서드파티 **소스 코드**를 두지 않는�
 - FetchContent 이름은 `tv_vulkanheaders` · `tv_vkbootstrap` · `tv_vma` · `tv_moltenvk`, 대상 이름은 `TerminalViewerVulkanHeaders` · `TerminalViewerVkBootstrap` · `TerminalViewerVma` 다.
   서브모듈로 붙인 부모 프로젝트의 이름과 겹치지 않게 앞에 붙였다. FetchContent 이름은 내려받기 단계의 경로에 네 번 들어가므로 짧게 둔다(Windows 경로 260자 한도).
 - 처음 구성 뒤에는 `-DFETCHCONTENT_FULLY_DISCONNECTED=ON` 으로 인터넷 없이 구성할 수 있다.
-- `OFF` 이면 하나도 내려받지 않는다. 기본값은 Windows `OFF`, 그 밖 `ON` 이다(Windows 에서 GPU 렌더러는 Windows 빌드 확인 후 켠다).
-- 패치하는 라이브러리는 없다.
+- `OFF` 이면 하나도 내려받지 않는다. 기본값은 Windows `OFF`, 그 밖 `ON` 이다(Windows 에서 GPU 렌더러는 스펙 부록 C 의 Windows 확인을 마친 뒤 켠다. MinGW 빌드 확인은 README §10).
+- 패치하는 라이브러리는 없다. vk-bootstrap v1.4.365 의 `VkBootstrap.h` 는 `<cstddef>` 없이 `std::byte` 를 써서 GCC 8(libstdc++ 8, Qt 5.15.2 MinGW 8.1)에서
+  컴파일되지 않는다. 소스를 고치지 않는다: `VkBootstrap.cpp` 를 GCC 로 컴파일할 때만 `-include cstddef` 를 주고(`TerminalViewerVkBootstrap` 의 PRIVATE
+  컴파일 옵션), 그 헤더를 include 하는 우리 파일(`Strategy/Vulkan/VulkanContext.h`)은 `<cstddef>` 를 먼저 include 한다(README §10).
 
 ### 버전을 올릴 때
 
@@ -57,7 +59,7 @@ TerminalViewer 저장소에는 서드파티 **소스 코드**를 두지 않는�
 - `resources/shaders/terminal.vert`, `terminal.frag` 는 이 저장소의 코드(Ocean 에서 옮김)다. 서드파티가 아니다.
 - 만든 SPIR-V(`*.spv`)를 저장소에 함께 둔다. 일반 빌드는 glslc 가 필요 없다. 원본을 고치면 `cmake -DGLSLC=<glslc 경로> -P tools/shaders/BuildShaders.cmake` 로 다시 만든다(glslc 는 Vulkan SDK 또는 shaderc 의 도구로, 빌드 결과물에 들어가지 않는다).
 
-## Cascadia Mono (저장소에 남긴 글꼴, 테스트만)
+## Cascadia Mono (저장소에 남긴 글꼴, 테스트 · 예제만)
 
 - 원본: https://github.com/microsoft/cascadia-code 릴리스 `v2407.24` 의 `CascadiaCode-2407.24.zip`(zip SHA256 `e67a68ee3386db63f48b9054bd196ea752bc6a4ebb4df35adce6733da50c8474`) 안
   `ttf/static/CascadiaMono-{Regular,Bold,Italic,BoldItalic}.ttf`. 글꼴 버전은 모두 `2407.024` 다. 공식 배포가 150MB zip 뿐이라 내려받지 않고 저장소에 둔다.
@@ -66,5 +68,9 @@ TerminalViewer 저장소에는 서드파티 **소스 코드**를 두지 않는�
   (Ocean `resources/fonts/` 와 바이트까지 같다).
 - 글꼴 이름 테이블: 저작권 `© 2021 Microsoft Corporation`, 라이선스 설명 nameID 13, URL nameID 14 `https://scripts.sil.org/OFL`. 네 파일이 글자까지 같다.
 - 라이선스: SIL OFL 1.1 (`tests/fonts/OFL.txt`). 원본 그대로 쓴다(수정·이름 변경 없음).
-- **테스트 실행 파일에만 들어간다**: `tests/fonts/TestFonts.qrc`(`:/terminalviewer/testfonts/`)를 `TerminalViewerTests` 에 넣고 `TestFonts::Register()`(`tests/TestFonts.cpp`)가 한 번만 등록한다.
+- **테스트 · 예제 실행 파일에만 들어간다**: `tests/fonts/TestFonts.qrc`(`:/terminalviewer/testfonts/`)를 `TerminalViewerTests` 에 넣고 `TestFonts::Register()`(`tests/TestFonts.cpp`)가 한 번만 등록한다.
+  예제 `TerminalShowcase`(`TERMINALVIEWER_BUILD_EXAMPLES`, README §4)도 같은 qrc 를 넣고 `examples/TerminalShowcase/main.cpp` 가 등록한다.
   라이브러리 `TerminalViewer` 와 `TerminalViewerTestSupport` 에는 넣지 않는다. 터미널 글꼴을 쓰는 앱(Ocean)은 자기 글꼴을 직접 넣고 고지한다(Ocean 은 `:/fonts/` 와 `LICENSE.CascadiaMono-OFL`).
+- 예제 실행 파일을 다른 사람에게 건네면(배포) OFL 1.1 에 따라 저작권 고지와 라이선스를 함께 준다: 글꼴 파일의 이름 테이블(위)에 들어 있고, 실행 파일 옆에 `tests/fonts/OFL.txt` 를 둔다.
+  예제는 설치 대상이 없고 배포물(Ocean)에 들어가지 않는다. 예제의 나머지 서드파티는 Qt5(LGPLv3, 동적 링크)와, GPU 를 켜면 라이브러리와 같은
+  Vulkan 의존성(위 표. macOS 는 앱 번들 `Contents/Frameworks/` 에 복사하는 MoltenVK 포함)이다. 고지 의무는 위 절과 같다.

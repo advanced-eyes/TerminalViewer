@@ -6,9 +6,10 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
-# 테스트는 이 저장소를 따로 빌드할 때만 만든다. Ocean 이 서브모듈로 붙이면 OFF 다(README §6).
+# 테스트와 예제는 이 저장소를 따로 빌드할 때만 만든다. Ocean 이 서브모듈로 붙이면 OFF 다(README §6).
 option(TERMINALVIEWER_BUILD_TESTS "Build unit tests (Qt Test)" ${PROJECT_IS_TOP_LEVEL})
-# Windows 에서는 GPU 렌더러를 켠 빌드를 아직 확인하지 않았다: 확인할 때까지 기본은 OFF 다(-DTERMINALVIEWER_GPU=ON 으로 켤 수 있다).
+option(TERMINALVIEWER_BUILD_EXAMPLES "Build the example apps (examples/)" ${PROJECT_IS_TOP_LEVEL})
+# Windows 에서는 GPU 렌더러를 켠 빌드의 확인(스펙 부록 C, README §10)이 끝나지 않았다: 끝날 때까지 기본은 OFF 다(-DTERMINALVIEWER_GPU=ON 으로 켤 수 있다).
 # 부모 프로젝트가 같은 이름의 일반 변수를 먼저 정하면 그 값을 쓴다(CMP0077 NEW, 예: 부모 프로젝트가 자기 GPU 옵션 값을 넘긴다).
 if(WIN32)
     set(TERMINALVIEWER_GPU_DEFAULT OFF)
@@ -105,7 +106,8 @@ if(APPLE)
 endif()
 if(WIN32)
     # 터미널 렌더 스레드가 애니메이션 동안 타이머 해상도를 1ms 로 올린다(timeBeginPeriod).
-    target_link_libraries(TerminalViewer PRIVATE winmm)
+    # 화면 위젯이 모니터의 정확한 주사율을 읽는다(QueryDisplayConfig · DisplayConfigGetDeviceInfo, user32).
+    target_link_libraries(TerminalViewer PRIVATE winmm user32)
 endif()
 
 ################################################################################
@@ -177,6 +179,41 @@ target_compile_definitions(TerminalViewerTestSupport PRIVATE ${TERMINALVIEWER_CO
 target_compile_options(TerminalViewerTestSupport PRIVATE ${TERMINALVIEWER_COMPILE_OPTIONS})
 
 ################################################################################
+# Examples (사람이 실행해 보는 앱 — Ocean 빌드에는 끼지 않는다, README §4)
+#   TerminalShowcase: 라이브러리가 그리는 것을 한 화면에. 화면 내용은 FakeFrameSource 로 채운다(ShowcaseScene).
+################################################################################
+if(TERMINALVIEWER_BUILD_EXAMPLES)
+    # 라이브러리는 글꼴이 없다: 테스트용 Cascadia Mono(OFL-1.1, docs/ThirdParty.md)를 예제 실행 파일에도 넣는다(:/terminalviewer/testfonts/).
+    add_executable(TerminalShowcase
+        examples/TerminalShowcase/main.cpp
+        examples/TerminalShowcase/ShowcaseScene.h
+        examples/TerminalShowcase/ShowcaseScene.cpp
+        examples/TerminalShowcase/ShowcaseWindow.h
+        examples/TerminalShowcase/ShowcaseWindow.cpp
+        tests/fonts/TestFonts.qrc)
+    set_target_properties(TerminalShowcase PROPERTIES
+        AUTOMOC ON
+        AUTORCC ON
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+    target_link_libraries(TerminalShowcase PRIVATE TerminalViewer TerminalViewerTestSupport)
+    target_compile_definitions(TerminalShowcase PRIVATE ${TERMINALVIEWER_COMPILE_DEFINITIONS})
+    target_compile_options(TerminalShowcase PRIVATE ${TERMINALVIEWER_COMPILE_OPTIONS})
+    if(APPLE)
+        # MoltenVK 는 실행 파일 옆 ../Frameworks/libMoltenVK.dylib 에서 찾는다(VulkanLoader): 앱 번들로 만들고 거기에 복사한다.
+        set_target_properties(TerminalShowcase PROPERTIES MACOSX_BUNDLE ON)
+        if(TERMINALVIEWER_MOLTENVK_DYLIB)
+            add_custom_command(TARGET TerminalShowcase POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_BUNDLE_CONTENT_DIR:TerminalShowcase>/Frameworks
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TERMINALVIEWER_MOLTENVK_DYLIB}
+                        $<TARGET_BUNDLE_CONTENT_DIR:TerminalShowcase>/Frameworks/libMoltenVK.dylib
+                VERBATIM)
+        endif()
+    endif()
+endif()
+
+################################################################################
 # Tests (Qt Test, 개발용 — Ocean 빌드에는 끼지 않는다)
 ################################################################################
 if(TERMINALVIEWER_BUILD_TESTS)
@@ -186,14 +223,19 @@ if(TERMINALVIEWER_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h)
     # 테스트용 글꼴(Cascadia Mono)은 실행 파일에만 넣는다(:/terminalviewer/testfonts/, TestFonts::Register).
-    add_executable(TerminalViewerTests ${TERMINALVIEWER_TEST_SOURCES} tests/fonts/TestFonts.qrc)
+    # 예제의 화면 내용 · 창(ShowcaseScene · ShowcaseWindow)은 예제 옵션과 상관없이 함께 컴파일해 시험한다(ShowcaseSceneTest · ShowcaseWindowTest).
+    add_executable(TerminalViewerTests ${TERMINALVIEWER_TEST_SOURCES} tests/fonts/TestFonts.qrc
+        examples/TerminalShowcase/ShowcaseScene.h
+        examples/TerminalShowcase/ShowcaseScene.cpp
+        examples/TerminalShowcase/ShowcaseWindow.h
+        examples/TerminalShowcase/ShowcaseWindow.cpp)
     set_target_properties(TerminalViewerTests PROPERTIES
         AUTOMOC ON
         AUTORCC ON
         CXX_STANDARD 17
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF)
-    target_include_directories(TerminalViewerTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_include_directories(TerminalViewerTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/examples/TerminalShowcase)
     target_link_libraries(TerminalViewerTests PRIVATE TerminalViewer TerminalViewerTestSupport Qt5::Test)
     target_compile_definitions(TerminalViewerTests PRIVATE ${TERMINALVIEWER_COMPILE_DEFINITIONS})
     target_compile_options(TerminalViewerTests PRIVATE ${TERMINALVIEWER_COMPILE_OPTIONS})
@@ -202,7 +244,20 @@ if(TERMINALVIEWER_BUILD_TESTS)
     add_test(NAME TerminalViewerTestMainTest
              COMMAND ${CMAKE_COMMAND} -DTEST_EXE=$<TARGET_FILE:TerminalViewerTests>
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/TestMainTest.cmake)
-    set_tests_properties(TerminalViewerTests TerminalViewerTestMainTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    set(TERMINALVIEWER_QT_TESTS TerminalViewerTests TerminalViewerTestMainTest)
+    if(TARGET TerminalShowcase)
+        # 예제를 끝에서 끝까지: --renderer cpu --grab 이 0 으로 끝나고 PNG 를 남기는지(tests/ShowcaseGrabTest.cmake)
+        add_test(NAME TerminalShowcaseGrabTest
+                 COMMAND ${CMAKE_COMMAND} -DSHOWCASE_EXE=$<TARGET_FILE:TerminalShowcase>
+                         -DGRAB_FILE=${CMAKE_CURRENT_BINARY_DIR}/TerminalShowcaseGrab.png
+                         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ShowcaseGrabTest.cmake)
+        # 명령행: 잘못된 인자는 모두 2, --help 류는 0(tests/ShowcaseArgsTest.cmake)
+        add_test(NAME TerminalShowcaseArgsTest
+                 COMMAND ${CMAKE_COMMAND} -DSHOWCASE_EXE=$<TARGET_FILE:TerminalShowcase>
+                         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ShowcaseArgsTest.cmake)
+        list(APPEND TERMINALVIEWER_QT_TESTS TerminalShowcaseGrabTest TerminalShowcaseArgsTest)
+    endif()
+    set_tests_properties(${TERMINALVIEWER_QT_TESTS} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
         # 실행 파일 옆에 DLL 이 없어도 Qt DLL 과 MinGW 런타임 DLL 을 찾게 Qt bin 폴더와 컴파일러 폴더를 PATH 앞에 둔다.
         # 콘솔 창 없이 돌면(IDE 등에서 부른 ctest) Qt Test 는 결과를 OutputDebugString 으로만 보내므로 QT_FORCE_STDERR_LOGGING 으로 출력에 남긴다.
@@ -214,7 +269,7 @@ if(TERMINALVIEWER_BUILD_TESTS)
             list(APPEND TERMINALVIEWER_TEST_ENVIRONMENT "PATH=path_list_prepend:${TERMINALVIEWER_MINGW_BIN_DIR}")
         endif()
         list(APPEND TERMINALVIEWER_TEST_ENVIRONMENT "QT_FORCE_STDERR_LOGGING=set:1" "QT_QPA_FONTDIR=set:${TERMINALVIEWER_WINDOWS_FONT_DIR}")
-        set_tests_properties(TerminalViewerTests TerminalViewerTestMainTest PROPERTIES ENVIRONMENT_MODIFICATION "${TERMINALVIEWER_TEST_ENVIRONMENT}")
+        set_tests_properties(${TERMINALVIEWER_QT_TESTS} PROPERTIES ENVIRONMENT_MODIFICATION "${TERMINALVIEWER_TEST_ENVIRONMENT}")
     endif()
     if(TERMINALVIEWER_GPU)
         # 셰이더 해시 검사(cmake/CheckShaders.cmake)가 원본이 한 글자만 바뀌어도 멈추는지 시험한다.

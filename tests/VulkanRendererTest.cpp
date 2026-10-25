@@ -190,7 +190,9 @@ private:
     }
 
     // 공급원의 전체 프레임으로 목록을 만든다. 아틀라스가 꽉 차 NEED_FULL_FRAME 이면 다시 캡처해 만든다.
-    static bool Build(FakeFrameSource& source, GlyphCache& cache, int scrollOffsetPx, DrawList& list)
+    // theme 을 주지 않으면 Theme()(최소 대비 끔)
+    static bool Build(FakeFrameSource& source, GlyphCache& cache, int scrollOffsetPx, DrawList& list,
+                      const TerminalTheme& theme = Theme())
     {
         DrawListBuilder builder;
         for (int iAttempt = 0; iAttempt < 4; ++iAttempt)
@@ -198,7 +200,7 @@ private:
             TerminalFrame frame;
             source.CaptureFrame(TerminalCaptureRequest{0, scrollOffsetPx > 0 ? 1 : 0, true}, frame);
             DrawListBuildStats stats;
-            if (builder.Build(frame, Theme(), true, true, scrollOffsetPx, cache, list, stats) == EBuildResult::OK)
+            if (builder.Build(frame, theme, true, true, scrollOffsetPx, cache, list, stats) == EBuildResult::OK)
                 return true;
         }
         return false;
@@ -271,6 +273,15 @@ private:
         return int(std::count_if(list.vecQuads.begin(), list.vecQuads.end(), [kind](const DrawQuad& quad) { return quad.eKind == kind; }));
     }
 
+    // 컬러 이모지 글꼴이 있는지(GlyphCacheTest::emojiGoesToColorPage 와 같은 판정). 없으면(예: offscreen QPA) 이모지가 흑백 페이지로 가서
+    // 컬러 글리프 쿼드도, 컬러 페이지에 올릴 것도 없다. 시험할 캐시를 건드리지 않게 따로 만든 캐시로 본다.
+    static bool HasColorEmoji(qreal devicePixelRatio)
+    {
+        GlyphCache probe(BaseFont(), devicePixelRatio);
+        const GlyphEntry entry = probe.GetGlyph(U"\U0001F600", false, false, 2);
+        return !entry.bEmpty && entry.ePage == EAtlasPage::COLOR;
+    }
+
 private slots:
     void initTestCase()
     {
@@ -335,6 +346,7 @@ private slots:
     {
         if (!m_upContext)
             QSKIP("Vulkan 장치 없음");
+        bool bNoColorEmoji = false;
         for (const qreal dRatio : {1.0, 2.0})
         {
             GlyphCache cache(BaseFont(), dRatio);
@@ -345,13 +357,51 @@ private slots:
             // MIXED 가 세 종류 쿼드를 모두 만든다(사각형, 흑백 글리프, 컬러 이모지)
             QVERIFY(CountKind(list, EQuadKind::RECT) > 0);
             QVERIFY(CountKind(list, EQuadKind::GLYPH_MONO) > 0);
-            QVERIFY(CountKind(list, EQuadKind::GLYPH_COLOR) > 0);
+            // 컬러 이모지 글꼴이 없으면 컬러 쿼드가 없다: 그것만 빼고 GPU 와 CPU 비교는 그대로 한 뒤 끝에서 건너뛴다
+            if (HasColorEmoji(dRatio))
+                QVERIFY(CountKind(list, EQuadKind::GLYPH_COLOR) > 0);
+            else
+                bNoColorEmoji = true;
             VulkanOffscreen offscreen(*m_upContext);
             const int iDiff = CompareWithCpu(offscreen, list, cache, TargetSize(list), dRatio > 1.0 ? "MIXED x2" : "MIXED x1");
             QVERIFY2(iDiff >= 0, "GPU 그리기 실패");
             QVERIFY2(iDiff <= kMaxChannelDiff, qPrintable(QStringLiteral("max diff %1").arg(iDiff)));
             m_upContext->ReleaseAtlasTexture(&cache);
         }
+        if (bNoColorEmoji)
+            QSKIP("no color emoji font (GPU and CPU were compared without color glyph quads)");
+    }
+
+    // 최소 대비를 켠 목록(고친 글자색)도 GPU 와 CPU 가 같다. 두 경로는 같은 DrawList 색을 쓴다
+    void minContrastMatchesCpu()
+    {
+        if (!m_upContext)
+            QSKIP("Vulkan 장치 없음");
+        GlyphCache cache(BaseFont(), 1.0);
+        FakeFrameSource source(40, 9, 4);
+        FillMixed(source);
+        TerminalCell lowContrast;
+        lowContrast.fg = TerminalRgb{20, 30, 120};   // FRAME_BG 위 어두운 파랑
+        // 줄 4 + 8: 스크롤백 4줄 아래 뷰포트의 마지막 줄(8)
+        source.SetText(4 + 8, 0, U"low contrast text", lowContrast);
+        lowContrast.bFaint = true;
+        source.SetText(4 + 8, 20, U"faint", lowContrast);
+        TerminalTheme theme = Theme();
+        theme.dMinContrastRatio = 4.5;
+        DrawList listOff;
+        QVERIFY(Build(source, cache, 0, listOff));
+        DrawList listOn;
+        QVERIFY(Build(source, cache, 0, listOn, theme));
+        QCOMPARE(listOn.vecQuads.size(), listOff.vecQuads.size());
+        int iChanged = 0;
+        for (size_t uQuad = 0; uQuad < listOn.vecQuads.size(); ++uQuad)
+            iChanged += listOn.vecQuads[uQuad].uColor != listOff.vecQuads[uQuad].uColor ? 1 : 0;
+        QVERIFY2(iChanged >= 17, qPrintable(QString::number(iChanged)));   // 고친 글자가 있다(적어도 위 줄의 글자들)
+        VulkanOffscreen offscreen(*m_upContext);
+        const int iDiff = CompareWithCpu(offscreen, listOn, cache, TargetSize(listOn), "MIXED min contrast 4.5");
+        QVERIFY2(iDiff >= 0, "GPU render failed");
+        QVERIFY2(iDiff <= kMaxChannelDiff, qPrintable(QStringLiteral("max diff %1").arg(iDiff)));
+        m_upContext->ReleaseAtlasTexture(&cache);
     }
 
     void scrollOffsetMatchesCpu()
@@ -498,6 +548,8 @@ private slots:
     {
         if (!m_upContext)
             QSKIP("Vulkan 장치 없음");
+        // 컬러 이모지 글꼴이 없으면 이모지도 흑백 페이지로 가서 컬러 페이지는 바뀐 영역이 없다: 컬러 페이지의 바뀐 영역 검사만 빼고 끝에서 건너뛴다
+        const bool bColorEmoji = HasColorEmoji(1.0);
         GlyphCache cache(BaseFont(), 1.0, 512, 512);
         VulkanOffscreen offscreen(*m_upContext);
         FakeFrameSource source(32, 3, 0);
@@ -533,10 +585,14 @@ private slots:
         QCOMPARE(monoAfter.iFullUploads, monoBefore.iFullUploads);   // 전체를 다시 올리지 않았다
         QCOMPARE(colorAfter.iFullUploads, colorBefore.iFullUploads);
         QCOMPARE(monoAfter.iPartialUploads, monoBefore.iPartialUploads + 1);
-        QCOMPARE(colorAfter.iPartialUploads, colorBefore.iPartialUploads + 1);
+        if (bColorEmoji)
+            QCOMPARE(colorAfter.iPartialUploads, colorBefore.iPartialUploads + 1);
         QVERIFY(monoAfter.iPartialRects - monoBefore.iPartialRects >= 2);   // 여러 영역을 스테이징 하나에 이어 붙인다
-        QVERIFY(colorAfter.iPartialRects - colorBefore.iPartialRects >= 2);
+        if (bColorEmoji)
+            QVERIFY(colorAfter.iPartialRects - colorBefore.iPartialRects >= 2);
         m_upContext->ReleaseAtlasTexture(&cache);
+        if (!bColorEmoji)
+            QSKIP("no color emoji font (the color page partial upload was not checked)");
     }
 
     // 올리기를 기록한 명령 버퍼를 제출하지 못하면(바뀐 영역은 이미 꺼냈다) MarkForFullUpload 로 다음에 전체를 올린다

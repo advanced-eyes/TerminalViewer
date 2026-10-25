@@ -8,6 +8,7 @@
 #include <QImage>
 #include <QPointer>
 #include <QSize>
+#include <QString>
 #include <QWidget>
 
 class ITerminalFrameSource;
@@ -18,13 +19,19 @@ class TerminalRenderThread;
 // 화면에 드러나 있다. 최소화·다른 창에 완전히 가려짐·다른 Space 의 창은 드러나 있지 않다.
 bool IsRenderVisible(bool widgetShown, bool topLevelExposed);
 // 최상위 창의 이벤트로 "드러남" 을 갱신한다.
-// - Expose: 그 창이 지금 드러났는지(windowExposed: 빈 영역이 아니고 isExposed)를 따른다.
+// - Expose: 그 창이 지금 드러났는지(windowExposed: IsTopLevelExposeVisible)를 따른다.
 // - Show(창이 다시 보임): 드러남. cocoa 는 숨겼다 다시 보인 창에 노출을 바로 알리지 않을 수 있다.
 // - WindowStateChange: 최소화(windowMinimized)면 드러나지 않음, 아니면 드러남. cocoa 는 Dock 에서 돌아온 창에 노출을 다시
 //   알리지 않을 때가 있다(이전 레이어 내용을 그대로 보인다).
 // 그 밖의 이벤트는 바꾸지 않는다. 드러났다고 본 뒤 실제로는 가려져 있으면 cocoa 가 가려짐을 다시 알린다.
 // GPU 자식 창 자신의 노출은 쓰지 않는다(cocoa 는 숨겼다 다시 보인 자식 창에 노출을 다시 알리지 않는다).
 bool UpdateTopLevelExposed(bool exposed, QEvent::Type eventType, bool windowExposed, bool windowMinimized);
+// 최상위 창의 Expose 가 "그 창이 드러났다" 는 뜻인가(위 UpdateTopLevelExposed 의 windowExposed). platformName 은 QPA 이름.
+// - cocoa(와 그 밖): 빈 영역이 아니고 isExposed 일 때. 가려짐·최소화·다른 Space 는 빈 영역의 Expose 로 온다.
+// - windows: isExposed 만 본다. 창 안을 네이티브 자식 창(GPU 화면)이 모두 덮으면 최상위 창의 WM_PAINT 는 빈 영역의 Expose 로
+//   오지만 창은 드러나 있다(Qt 는 자식 창에 덮인 창도 isExposed 참으로 알린다). 최소화 · 숨김은 isExposed 거짓으로 온다.
+//   영역을 보면 GPU 화면이 창을 꽉 채울 때 처음 그리기 전에 숨은 화면이 되어 한 번도 그리지 않는다.
+bool IsTopLevelExposeVisible(const QString& platformName, bool regionEmpty, bool windowExposed);
 
 // 터미널 화면 하나의 그리기 대상(스펙 §10). 렌더 스레드와는 명령으로만 통신한다. 입력은 ③ 이 맡는다.
 // GPU: 네이티브 자식 창(WA_NativeWindow, WA_PaintOnScreen, WA_NoSystemBackground, paintEngine = nullptr).

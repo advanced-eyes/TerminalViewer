@@ -2,6 +2,7 @@
 
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/DrawList.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/GlyphCache.h"
+#include "TerminalViewer/Algorithm/TerminalRenderer/Common/TerminalContrast.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/TerminalFrame.h"
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/TerminalTheme.h"
 
@@ -55,4 +56,5 @@ private:
     int m_iPrevPreeditRow = -1;
     int m_iPrevScrollOffsetPx = 0;
     bool m_bHasPrevBuild = false;
+    ContrastCache m_contrast;        // 테마의 최소 대비로 고친 글자색((글자색, 배경색) 짝마다)
 };

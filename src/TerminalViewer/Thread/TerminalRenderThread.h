@@ -84,7 +84,9 @@ public:
 
     void Start();
     // 지금 그리는 화면 하나를 마치고 끝난다(4초가 지나면 스레드를 강제로 끝낸다: CaptureFrame 이 엔진 잠금에 오래 막히면 안 된다).
-    // 돌아오기 전에 잡혀 있지 않은(RetainSource) 공급원마다 SourceReleased 를 낸다.
+    // 돌아오기 전에 잡혀 있지 않은(RetainSource) 공급원마다 SourceReleased 를 한 번 낸다. 그 슬롯에서 이 객체를 지우거나 Stop 을
+    // 다시 불러도 된다(남은 공급원은 그 Stop 이 이어서 낸다). 슬롯이 아직 알리지 않은 공급원을 잡거나(RetainSource) 붙이면(AttachView)
+    // 그 공급원은 쓰이는 채로 남아 이번에는 내지 않는다(놓을 때나 다시 멈출 때 한 번).
     // 화면 id 는 Stop → Start 뒤에 쓸 수 없다(위젯을 모두 지운 뒤 멈춘다, 스펙 부록 C)
     void Stop();
     // 테스트·도구용: GPU Strategy 를 만드는 함수를 바꾼다(기본 = TerminalRendererGPU::Create). Start 전에 부른다
@@ -107,9 +109,13 @@ public:
     void ResizeView(int viewId, const QSize& devicePixelSize, qreal devicePixelRatio);
     void SetVisible(int viewId, bool visible);
     void SetFocus(int viewId, bool focused);
+    // 공급원의 상태가 바뀌었다. Wake 로 그리는 프레임은 그 화면의 프레임 간격(SetRefreshRate)당 한 번 이하다: 마감(위상 기준 시각
+    // + 간격. 쏟는 동안 제때 그렸으면 이전 마감 + 간격, 아니면 마지막으로 그린 시각 + 간격)이 지났으면 바로, 아니면 마감에 그때의
+    // 최신 상태를 그린다. 렌더 스레드가 아직 캡처하지 않은 Wake 가 있으면 이 Wake 는 그것과 합쳐진다(렌더 스레드를 깨우지 않는다)
     void Wake(int viewId);
     void ScrollPixels(int viewId, double pixels);   // 장치 픽셀. + = 아래(최근) 쪽
-    // 그 화면의 주사율(애니메이션 프레임 간격). GUI 스레드가 QScreen::refreshRate() 로 얻어 넘긴다. 0 이하는 무시, 기본 60Hz
+    // 그 화면의 주사율(애니메이션과 Wake 프레임의 간격). GUI 스레드가 ScreenRefreshRate(TerminalPlatform.h)로 얻어 넘긴다
+    // (Windows 의 QScreen::refreshRate() 는 정수로 버린 값이다). 0 이하는 무시, 기본 60Hz
     void SetRefreshRate(int viewId, double hz);
     void SetFont(const QFont& font);
     void SetTheme(const TerminalTheme& theme);
@@ -132,7 +138,11 @@ public:
 
 signals:
     // 화면별 신호(FrameReady·FrameStats·ViewNeedsCpuFallback·ViewSurfaceLost)는 DetachView 를 부른 뒤에는 그 id 로 오지 않는다.
-    void FrameReady(int viewId, const QImage& imgPatch, const QRect& rectPatch);   // CPU
+    // FrameReady(CPU): 마지막 조각 뒤에 바뀐 영역(을 감싼 사각형. 그것이 화면의 절반 이상이면 화면 전체: 바뀌지 않은 픽셀도 지금
+    // 화면 그대로다). 이 객체의 스레드(GUI)가 조각을 받기 전에는 그 화면의 다음 조각을 그리지 않는다
+    // (CPU 역압: 받지 않은 조각은 화면마다 하나). 받으면 그때의 최신 상태를 그리고, 그 조각이 그사이 바뀐 영역을 모두 덮는다.
+    // 그래서 이 객체의 스레드에서 이벤트 루프가 돌아야 CPU 화면이 계속 그려진다.
+    void FrameReady(int viewId, const QImage& imgPatch, const QRect& rectPatch);
     // 이 화면은 CPU 위젯으로 바꿔 달라: GPU 를 쓸 수 없음, surface 를 만들 수 없음, 또는 같은 공급원이 표시 없이 surface 를
     // 3번 잇달아 잃었음(그때는 ViewSurfaceLost 대신 이것이 온다)
     void ViewNeedsCpuFallback(int viewId);
@@ -145,6 +155,9 @@ signals:
     // 렌더 스레드가 그 화면을 다 뗐다(Strategy 에서 떼고 funcRelease 를 불렀고 공급원을 더 쓰지 않는다).
     // DetachView 를 처리할 때마다(그 화면이 없었어도) 그리고 Stop 때 남아 있던 화면마다 낸다.
     // 같은 id 로 여러 번 올 수 있다(받는 쪽은 반복을 무시한다). 공급원을 지워도 되는 때는 이 신호가 아니라 SourceReleased 다.
+    // 이 신호를 받는 슬롯 안에서는 그 화면이 아직 공급원을 쓰는 것으로 센다(슬롯이 모두 끝난 뒤 센다). 그래서 슬롯이 같은 공급원을
+    // 다시 붙이거나 잡으면 SourceReleased 가 오지 않고, 슬롯이 잡은 것을 놓으면 그 자리가 아니라 이 신호 뒤에 온다.
+    // 슬롯에서 이 객체를 지워도 된다(그때 SourceReleased 는 지우면서 부른 Stop 이 낸다).
     void ViewDetached(int viewId);
     // 글꼴이나 여백이 바뀌었다(SetFont·SetTheme 를 부른 스레드에서 낸다). 화면은 격자 크기를 다시 잰다
     void CellLayoutChanged();

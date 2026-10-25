@@ -55,6 +55,12 @@ if(MSVC)
 else()
     target_compile_options(TerminalViewerVkBootstrap PRIVATE -w)
 endif()
+# VkBootstrap.h 는 <cstddef> 를 include 하지 않고 std::byte 를 쓴다. libstdc++ 8(GCC 8.1, Qt 5.15.2 MinGW)은 다른 표준 헤더가
+# <cstddef> 를 끌어오지 않아 컴파일되지 않는다. 서드파티 소스는 고치지 않으므로 vk-bootstrap 자신의 .cpp 를 GCC 로 컴파일할 때만
+# <cstddef> 를 먼저 넣는다(PRIVATE). 쓰는 쪽에 붙이면 GCC 가 그 대상의 미리 컴파일한 헤더(PCH)를 쓰지 않는다.
+# 그 헤더를 include 하는 우리 파일(Strategy/Vulkan/VulkanContext.h)은 <cstddef> 를 먼저 include 한다.
+# MSVC · Clang(macOS 포함)과 C 파일에는 아무것도 더하지 않는다.
+target_compile_options(TerminalViewerVkBootstrap PRIVATE "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:SHELL:-include cstddef>")
 
 ################################################################################
 # VulkanMemoryAllocator (MIT, 헤더만. 구현은 src/.../Vulkan/VmaImplementation.cpp 한 곳)

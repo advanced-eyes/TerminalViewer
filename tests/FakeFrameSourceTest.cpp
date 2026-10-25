@@ -285,6 +285,63 @@ private slots:
         QVERIFY(mapSeen.size() > 5);
     }
 
+    void setLineReplacesWholeLine()
+    {
+        FakeFrameSource source(10, 5, 20);
+        const int iLine = source.GetViewportTop() + 1;
+        source.SetText(iLine, 0, U"abcdefghij", TerminalCell{});
+        source.SetSelection(iLine, 2, 6);
+        TerminalFrame frame;
+        source.CaptureFrame(Req(), frame);
+        const uint64_t llOldId = frame.vecRows[1].llId;
+
+        const std::u32string strFamily = U"\U0001F468\u200D\U0001F469\u200D\U0001F467";   // \u200D = ZWJ
+        std::vector<TerminalCell> vecCells(3);
+        vecCells[0].uCodepoint = 'x';
+        vecCells[1].uCodepoint = 0x1F468;
+        vecCells[1].eWidth = ECellWidth::WIDE;
+        vecCells[1].iGrapheme = 0;
+        vecCells[2].eWidth = ECellWidth::SPACER_TAIL;
+        source.SetLine(iLine, vecCells, {strFamily});
+        source.CaptureFrame(Req(), frame);
+        QCOMPARE(frame.eDirty, EFrameDirty::PARTIAL);
+        QCOMPARE(DirtyCount(frame), 1);
+        const TerminalRow& row = frame.vecRows[1];
+        QVERIFY(row.bDirty);
+        QVERIFY(row.llId != llOldId);
+        QCOMPARE(int(row.vecCells.size()), 10);
+        QCOMPARE(row.vecCells[0].uCodepoint, uint32_t('x'));
+        QCOMPARE(row.vecCells[1].eWidth, ECellWidth::WIDE);
+        QCOMPARE(row.vecCells[1].iGrapheme, 0);
+        QCOMPARE(row.vecCells[2].eWidth, ECellWidth::SPACER_TAIL);
+        for (int iCol = 3; iCol < 10; ++iCol)
+        {
+            QCOMPARE(row.vecCells[size_t(iCol)].uCodepoint, uint32_t(0));   // 옛 글자가 남지 않는다
+        }
+        QCOMPARE(int(row.vecGraphemes.size()), 1);
+        QVERIFY(row.vecGraphemes[0] == strFamily);
+        QCOMPARE(row.iSelectBegin, -1);   // 선택도 지운다
+        QCOMPARE(row.iSelectEnd, -1);
+    }
+
+    void setLineClipsToColumnsAndIgnoresBadLine()
+    {
+        FakeFrameSource source(4, 2, 0);
+        std::vector<TerminalCell> vecCells(7);
+        for (size_t uCol = 0; uCol < vecCells.size(); ++uCol)
+        {
+            vecCells[uCol].uCodepoint = uint32_t('a' + uCol);
+        }
+        source.SetLine(0, vecCells, {});
+        source.SetLine(-1, vecCells, {});
+        source.SetLine(2, vecCells, {});
+        TerminalFrame frame;
+        source.CaptureFrame(Req(0, 0, true), frame);
+        QCOMPARE(int(frame.vecRows[0].vecCells.size()), 4);
+        QCOMPARE(frame.vecRows[0].vecCells[3].uCodepoint, uint32_t('d'));
+        QCOMPARE(frame.vecRows[1].vecCells[0].uCodepoint, uint32_t(0));
+    }
+
     void cursorOnlyChangeIsPartial()
     {
         FakeFrameSource source(10, 5, 20);

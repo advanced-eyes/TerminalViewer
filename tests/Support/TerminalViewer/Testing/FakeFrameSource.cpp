@@ -132,6 +132,22 @@ void FakeFrameSource::SetCell(int line, int col, const TerminalCell& cell)
     m_vecLines[line].uVersion = ++m_uNextVersion;
 }
 
+void FakeFrameSource::SetLine(int line, const std::vector<TerminalCell>& cells, const std::vector<std::u32string>& graphemes)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (line < 0 || line >= int(m_vecLines.size()))
+    {
+        return;
+    }
+    Line& target = m_vecLines[line];
+    target.vecCells.assign(m_iCols, TerminalCell{});
+    std::copy_n(cells.begin(), std::min(cells.size(), size_t(m_iCols)), target.vecCells.begin());
+    target.vecGraphemes = graphemes;
+    target.iSelectBegin = -1;
+    target.iSelectEnd = -1;
+    target.uVersion = ++m_uNextVersion;
+}
+
 void FakeFrameSource::SetCursor(const TerminalCursor& cursor)
 {
     std::lock_guard<std::mutex> lock(m_mutex);

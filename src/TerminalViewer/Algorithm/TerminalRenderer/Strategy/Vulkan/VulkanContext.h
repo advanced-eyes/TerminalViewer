@@ -1,5 +1,7 @@
 #pragma once
 
+// vk-bootstrap v1.4.365 의 VkBootstrap.h 는 <cstddef> 없이 std::byte 를 쓴다(libstdc++ 8 = GCC 8.1 에서 컴파일되지 않는다): 먼저 넣는다
+#include <cstddef>
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 

@@ -1,6 +1,10 @@
 #include <QApplication>
 #include <QTest>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 #include <cstdio>
 #include <memory>
 #include <vector>
@@ -21,6 +25,7 @@ constexpr int kUnknownClassExitCode = 1;   // 첫 인자와 맞는 클래스가 
     X(BoxGlyphPainterTest) \
     X(GlyphRasterizerTest) \
     X(GlyphCacheTest) \
+    X(TerminalContrastTest) \
     X(DrawListBuilderTest) \
     X(SoftwareCompositorTest) \
     X(TerminalRendererTest) \
@@ -30,15 +35,45 @@ constexpr int kUnknownClassExitCode = 1;   // 첫 인자와 맞는 클래스가 
     X(VulkanRendererTest) \
     X(VulkanViewTest) \
     X(TerminalRenderThreadGpuTest) \
-    X(TerminalSurfaceTest)
+    X(TerminalSurfaceTest) \
+    X(ShowcaseSceneTest) \
+    X(ShowcaseWindowTest)
 
 #define TERMINALVIEWER_DECLARE_TEST(Name) QObject* Create##Name();
 TERMINALVIEWER_TEST_CLASSES(TERMINALVIEWER_DECLARE_TEST)
+
+// Windows 11 은 보이는 창이 없는 프로세스의 timeBeginPeriod(1)을 약 3초 뒤부터 무시한다(전원 제한. 이 PC 에서 Sleep(1) 이
+// 1.9ms -> 15.7ms). 렌더 스레드는 애니메이션 동안 1ms 타이머로 프레임 시각을 맞추므로, 실행 몇 초 뒤에 도는 프레임 간격 시험
+// (TerminalRenderThreadTest::refreshRatePacesScrollFrames)이 60Hz · 120Hz 모두 프레임을 반만 그려 실패했다. 창 없이 도는
+// 시험 프로세스만 그 제한을 끈다(PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION 을 끔). 실제 앱은 창이 보일 때 그린다.
+// MinGW 8.1 헤더에 구조체 · 값이 없어 직접 적고, Windows 8 이전에는 없는 함수라 이름으로 찾는다.
+void KeepFineTimerResolution()
+{
+#ifdef Q_OS_WIN
+    struct PowerThrottlingState
+    {
+        ULONG ulVersion;
+        ULONG ulControlMask;
+        ULONG ulStateMask;
+    };
+    constexpr ULONG kPowerThrottlingVersion = 1;     // PROCESS_POWER_THROTTLING_CURRENT_VERSION
+    constexpr ULONG kIgnoreTimerResolution = 0x4;    // PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+    constexpr int kProcessPowerThrottling = 4;       // PROCESS_INFORMATION_CLASS::ProcessPowerThrottling
+    using SetProcessInformationFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
+    const auto fpSetProcessInformation = reinterpret_cast<SetProcessInformationFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetProcessInformation")));
+    if (!fpSetProcessInformation)
+        return;
+    PowerThrottlingState state{kPowerThrottlingVersion, kIgnoreTimerResolution, 0};   // 제한을 끈다(StateMask 0)
+    fpSetProcessInformation(GetCurrentProcess(), kProcessPowerThrottling, &state, sizeof(state));
+#endif
+}
 
 int main(int argc, char* argv[])
 {
     // TerminalSurface 는 위젯이다. ctest 는 QT_QPA_PLATFORM=offscreen 으로 돌린다.
     QApplication app(argc, argv);
+    KeepFineTimerResolution();
 
     const QString strOnly = argc > kClassNameArgument ? QString::fromLocal8Bit(argv[kClassNameArgument]) : QString();
     // 클래스 이름 뒤의 인자는 QTest 에 넘긴다(예: -o out.txt,txt — MinGW Qt 는 콘솔에 결과를 쓰지 않아 파일로 받는다).

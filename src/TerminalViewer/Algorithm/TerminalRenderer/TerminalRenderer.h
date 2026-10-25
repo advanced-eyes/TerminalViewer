@@ -37,7 +37,9 @@ struct TerminalRenderOutput
     bool bDeviceLost = false;    // GPU: 모든 화면을 CPU 로
     bool bSurfaceLost = false;   // GPU: 이 화면의 surface 를 다시 만들어야 함
     int iPresentMode = -1;       // GPU: 표시한 VkPresentModeKHR 값. CPU: -1
-    QImage imgPatch;             // CPU: 바뀐 영역만 잘라 낸 조각(장치 픽셀)
+    // CPU: 바뀐 영역을 감싼 사각형을 잘라 낸 조각(장치 픽셀). 그 사각형이 화면의 절반 이상이면 화면 전체이고, 이때는 복사하지 않고
+    // Strategy 의 화면 이미지와 픽셀을 함께 쓴다(QImage 암시적 공유. 쥐고 있어도 다음 프레임이 바꾸지 않는다)
+    QImage imgPatch;
     QRect rectPatch;             // CPU: 조각 위치(장치 픽셀)
 };
 

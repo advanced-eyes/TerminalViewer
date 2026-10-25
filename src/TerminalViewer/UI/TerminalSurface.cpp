@@ -5,6 +5,7 @@
 #include "TerminalViewer/UI/TerminalSurfaceNative.h"
 
 #include <QExposeEvent>
+#include <QGuiApplication>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPlatformSurfaceEvent>
@@ -17,7 +18,7 @@
 namespace
 {
 constexpr int kDetachWaitMs = 500;       // 네이티브 창이 사라지기 직전 렌더 스레드를 기다리는 한도(스펙 §10)
-constexpr double kMinRefreshHz = 24.0;   // QScreen::refreshRate() 를 이 범위로 자른다
+constexpr double kMinRefreshHz = 24.0;   // 넘기는 주사율(ScreenRefreshRate)을 이 범위로 자른다
 constexpr double kMaxRefreshHz = 360.0;
 }
 
@@ -65,6 +66,13 @@ bool UpdateTopLevelExposed(bool exposed, QEvent::Type eventType, bool windowExpo
     default:
         return exposed;
     }
+}
+
+bool IsTopLevelExposeVisible(const QString& platformName, bool regionEmpty, bool windowExposed)
+{
+    if (platformName == QLatin1String("windows"))
+        return windowExposed;   // 창을 꽉 채운 네이티브 자식 창 때문에 영역이 비어도 드러나 있다(헤더 주석)
+    return !regionEmpty && windowExposed;
 }
 
 TerminalSurface::TerminalSurface(TerminalRenderThread* pRenderThread, ITerminalFrameSource* pSource, bool useGpu, QWidget* parent)
@@ -240,8 +248,10 @@ bool TerminalSurface::eventFilter(QObject* watched, QEvent* event)
     {
         // 최상위 창이 가려지거나(다른 창·다른 Space) 최소화되면 cocoa 는 빈 영역의 Expose 를 보낸다(isExposed 거짓).
         // 그런 창에 표시하면 macOS 에서 다른 화면까지 약 1초씩 멈췄다(스펙 §15 위험 5, 부록 A S1 (d)).
-        const bool bWindowExposed =
-            eType == QEvent::Expose && !static_cast<QExposeEvent*>(event)->region().isEmpty() && m_pTopLevelWindow->isExposed();
+        // Windows 는 창을 꽉 채운 GPU 자식 창 때문에 빈 영역의 Expose 가 와도 드러나 있다(IsTopLevelExposeVisible)
+        const bool bWindowExposed = eType == QEvent::Expose &&
+                                    IsTopLevelExposeVisible(QGuiApplication::platformName(), static_cast<QExposeEvent*>(event)->region().isEmpty(),
+                                                            m_pTopLevelWindow->isExposed());
         const bool bWindowMinimized = m_pTopLevelWindow->windowStates().testFlag(Qt::WindowMinimized);
         m_bTopLevelExposed = UpdateTopLevelExposed(m_bTopLevelExposed, eType, bWindowExposed, bWindowMinimized);
         UpdateRenderVisibility();
@@ -412,11 +422,14 @@ void TerminalSurface::SendResize()
 
 void TerminalSurface::SendRefreshRate()
 {
-    // 주사율은 GUI 스레드에서 QScreen 으로 얻는다(렌더 스레드는 vkGetRefreshCycleDurationGOOGLE 를 부르지 않는다, 스펙 §5)
-    QScreen* pScreen = screen();
-    if (m_iViewId == 0 || !pScreen || !(pScreen->refreshRate() > 0.0))
+    // 주사율은 GUI 스레드에서 QScreen 으로 얻는다(렌더 스레드는 vkGetRefreshCycleDurationGOOGLE 를 부르지 않는다, 스펙 §5).
+    // Windows 는 Qt 가 정수로 버린 값 대신 그 모니터의 정확한 값(QueryDisplayConfig)을 쓴다: 59.949Hz 화면을 59 로 그리지 않게
+    if (m_iViewId == 0)
         return;
-    m_pRenderThread->SetRefreshRate(m_iViewId, std::clamp(pScreen->refreshRate(), kMinRefreshHz, kMaxRefreshHz));
+    const double dHz = ScreenRefreshRate(screen());
+    if (!(dHz > 0.0))
+        return;
+    m_pRenderThread->SetRefreshRate(m_iViewId, std::clamp(dHz, kMinRefreshHz, kMaxRefreshHz));
 }
 
 void TerminalSurface::UpdateGrid()

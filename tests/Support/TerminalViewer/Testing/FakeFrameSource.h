@@ -19,6 +19,9 @@ public:
 
     void SetText(int line, int col, const std::u32string& text, const TerminalCell& style);   // 2칸 글자는 WIDE + SPACER_TAIL
     void SetCell(int line, int col, const TerminalCell& cell);
+    // 줄 하나를 통째로 바꾼다: 칸은 열 수에 맞춰 자르거나 빈칸으로 채우고, 여러 코드포인트 글자(TerminalCell::iGrapheme 가 가리킨다)를
+    // 바꾸고, 그 줄의 선택을 지운다. 2칸 글자는 부르는 쪽이 WIDE + SPACER_TAIL 로 넣는다
+    void SetLine(int line, const std::vector<TerminalCell>& cells, const std::vector<std::u32string>& graphemes);
     void SetCursor(const TerminalCursor& cursor);
     void SetPreedit(const std::optional<TerminalPreedit>& preedit);
     void SetSelection(int line, int begin, int end);

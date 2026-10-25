@@ -4,7 +4,8 @@
 
 #include <unordered_map>
 
-// 화면마다 이미지 1장을 유지하고 SoftwareCompositor 로 합성한 뒤 바뀐 영역만 조각으로 낸다. (CPU)
+// 화면마다 이미지 1장을 유지하고 SoftwareCompositor 로 합성한 뒤 바뀐 영역(을 감싼 사각형)만 조각으로 낸다. (CPU)
+// 그 사각형이 화면의 절반 이상이면 복사하지 않고 화면 이미지 전체를 조각으로 낸다(TerminalRenderOutput::imgPatch).
 class TerminalRendererCPU : public ITerminalRenderStrategy
 {
 public:

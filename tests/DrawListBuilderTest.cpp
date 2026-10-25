@@ -1,11 +1,15 @@
 #include "TerminalViewer/Algorithm/TerminalRenderer/Common/DrawListBuilder.h"
 
+#include "TerminalViewer/Algorithm/TerminalRenderer/Common/TerminalContrast.h"
 #include "TerminalViewer/Testing/FakeFrameSource.h"
 #include "TestFonts.h"
 
 #include <QTest>
 
 #include <algorithm>
+#include <iterator>
+#include <limits>
+#include <random>
 #include <set>
 #include <utility>
 
@@ -17,6 +21,8 @@ constexpr TerminalRgb BLUE{0, 0, 255};
 constexpr TerminalRgb FRAME_BG{10, 20, 30};
 constexpr TerminalRgb FRAME_FG{200, 210, 220};
 constexpr TerminalRgb SENTINEL_BG{77, 88, 99};   // bBgDefault 칸의 cell.bg: frame.background 와 달라야 구분된다
+constexpr TerminalRgb DARK_BLUE{0, 0, 160};      // FRAME_BG 위 대비 1.33
+constexpr double MIN_CONTRAST = 4.5;
 }
 
 class DrawListBuilderTest : public QObject
@@ -121,6 +127,52 @@ private:
             if (!SameQuad(a.vecQuads[iIndex], b.vecQuads[iIndex]))
                 return false;
         return a.iBackgroundCount == b.iBackgroundCount && a.iGlyphCount == b.iGlyphCount;
+    }
+
+    static TerminalTheme MakeContrastTheme(double ratio)
+    {
+        TerminalTheme theme = Theme();
+        theme.dMinContrastRatio = ratio;
+        return theme;
+    }
+
+    static bool BuildThemed(DrawList& list, const TerminalFrame& frame, GlyphCache& cache, const TerminalTheme& theme)
+    {
+        DrawListBuilder builder;
+        DrawListBuildStats stats;
+        return builder.Build(frame, theme, true, true, 0, cache, list, stats) == EBuildResult::OK;
+    }
+
+    static TerminalRgb MixHalf(const TerminalRgb& a, const TerminalRgb& b)
+    {
+        return TerminalRgb{uint8_t((a.r + b.r + 1) / 2), uint8_t((a.g + b.g + 1) / 2), uint8_t((a.b + b.b + 1) / 2)};
+    }
+
+    static TerminalRgb UnpackColor(uint32_t color)   // 불투명 색만(PackColor 의 반대)
+    {
+        return TerminalRgb{uint8_t(color & 0xFF), uint8_t((color >> 8) & 0xFF), uint8_t((color >> 16) & 0xFF)};
+    }
+
+    // 글리프 쿼드의 가운데가 있는 칸(왼쪽 베어링이 음수여도 맞다)
+    static int GetGlyphColumn(const DrawQuad& quad, int cellWidth) { return (quad.iX + quad.uW / 2) / cellWidth; }
+
+    // 그 칸의 글리프 쿼드. 없으면 nullptr
+    static const DrawQuad* FindGlyphAt(const std::vector<DrawQuad>& quads, int col, int cellWidth)
+    {
+        for (const DrawQuad& quad : quads)
+            if (quad.eKind != EQuadKind::RECT && GetGlyphColumn(quad, cellWidth) == col)
+                return &quad;
+        return nullptr;
+    }
+
+    // 그 칸의 취소선 사각형. 없으면 nullptr
+    static const DrawQuad* FindStrikeAt(const std::vector<DrawQuad>& quads, int col, const CellMetrics& metrics)
+    {
+        for (const DrawQuad& quad : quads)
+            if (quad.eKind == EQuadKind::RECT && quad.iY == metrics.iStrikeY && quad.iX == col * metrics.iCellWidth &&
+                quad.uH == metrics.iStrikeThickness)
+                return &quad;
+        return nullptr;
     }
 
 private slots:
@@ -922,6 +974,364 @@ private slots:
         const auto vecDeco = Decorations(list);
         QCOMPARE(int(vecDeco.size()), 1);
         QCOMPARE(int(vecDeco[0].uW), 2);
+    }
+
+    // ---- 최소 대비(TerminalTheme::dMinContrastRatio) ----
+
+    void minContrastIsPartOfTheTheme()
+    {
+        const TerminalTheme theme;
+        QCOMPARE(theme.dMinContrastRatio, 1.0);   // 기본은 끔
+        TerminalTheme other = theme;
+        other.dMinContrastRatio = MIN_CONTRAST;
+        QVERIFY(theme != other);
+        other.dMinContrastRatio = 1.0;
+        QVERIFY(theme == other);
+        other.dMinContrastRatio = std::numeric_limits<double>::quiet_NaN();   // 잘못된 값도 자기 자신과는 같다(매 프레임 캐시를 버리지 않게)
+        const TerminalTheme copy = other;
+        QVERIFY(other == copy);
+        QVERIFY(other != theme);
+    }
+
+    // 끈 값(1 이하, NaN)은 기본 테마와 같은 목록을 만든다: 낮은 대비의 글자 · 흐리게 · 반전 · 선택 · 블록 커서 · 조합 글자 · 밑줄 · 취소선
+    void minContrastOffKeepsEveryColor()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        TerminalFrame frame = MakeFrame(10, 2);
+        const auto funcSet = [&](int col, char32_t codepoint) -> TerminalCell&
+        {
+            TerminalCell& cell = Cell(frame, 0, col);
+            cell.uCodepoint = codepoint;
+            cell.fg = DARK_BLUE;
+            cell.underlineColor = DARK_BLUE;
+            return cell;
+        };
+        funcSet(0, 'A');
+        funcSet(1, 'B').bFaint = true;
+        funcSet(2, 'C').bInverse = true;
+        funcSet(3, 'D').bStrikethrough = true;
+        funcSet(4, 'E').eUnderline = EUnderline::CURLY;
+        funcSet(5, 'F');
+        frame.vecRows[0].iSelectBegin = 5;
+        frame.vecRows[0].iSelectEnd = 6;
+        Cell(frame, 1, 0).uCodepoint = 'G';
+        Cell(frame, 1, 0).fg = DARK_BLUE;
+        frame.cursor = TerminalCursor{true, false, ECursorShape::BLOCK, 0, 1, false, TerminalRgb{20, 30, 40}};
+        DrawList listDefault;
+        QVERIFY(BuildOk(listDefault, frame, cache));
+        QCOMPARE(Glyphs(listDefault)[0].uColor, PackColor(DARK_BLUE));
+        for (const double dRatio : {1.0, 0.5, 0.0, -1.0, std::numeric_limits<double>::quiet_NaN()})
+        {
+            DrawList list;
+            QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(dRatio)));
+            QVERIFY2(SameQuads(list, listDefault), qPrintable(QString::number(dRatio)));
+        }
+        TerminalPreedit preedit;
+        TerminalCell preeditCell;
+        preeditCell.uCodepoint = 'p';
+        preeditCell.fg = DARK_BLUE;
+        preedit.vecCells = {preeditCell};
+        frame.optPreedit = preedit;
+        QVERIFY(BuildOk(listDefault, frame, cache));
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(1.0)));
+        QVERIFY(SameQuads(list, listDefault));
+    }
+
+    // 켜면 글자색(글리프 · 취소선)을 고친다. 밑줄 색은 따로 정한 색이라 그대로다. 이미 충분한 칸은 그대로다
+    void minContrastAdjustsTextAndStrike()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        const CellMetrics& metrics = cache.GetMetrics();
+        TerminalFrame frame = MakeFrame(4, 1);
+        Cell(frame, 0, 0).uCodepoint = 'A';
+        Cell(frame, 0, 0).fg = DARK_BLUE;
+        TerminalCell& decorated = Cell(frame, 0, 1);
+        decorated.uCodepoint = 'B';
+        decorated.fg = DARK_BLUE;
+        decorated.bStrikethrough = true;
+        decorated.eUnderline = EUnderline::SINGLE;
+        decorated.underlineColor = DARK_BLUE;
+        Cell(frame, 0, 2).uCodepoint = 'C';   // FRAME_FG: 이미 충분하다
+        const TerminalRgb expected = EnsureContrast(DARK_BLUE, FRAME_BG, MIN_CONTRAST);
+        QVERIFY(expected != DARK_BLUE);
+        QVERIFY(GetContrastRatio(expected, FRAME_BG) >= MIN_CONTRAST);
+        QVERIFY(GetContrastRatio(FRAME_FG, FRAME_BG) >= MIN_CONTRAST);
+
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        const auto vecGlyph = Glyphs(list);
+        QCOMPARE(int(vecGlyph.size()), 3);
+        QCOMPARE(vecGlyph[0].uColor, PackColor(expected));
+        QCOMPARE(vecGlyph[1].uColor, PackColor(expected));
+        QCOMPARE(vecGlyph[2].uColor, PackColor(FRAME_FG));
+        const auto vecDeco = Decorations(list);
+        QCOMPARE(int(vecDeco.size()), 2);
+        QCOMPARE(int(vecDeco[0].iY), metrics.iUnderlineY);
+        QCOMPARE(vecDeco[0].uColor, PackColor(DARK_BLUE));   // 밑줄: 고치지 않는다
+        QCOMPARE(int(vecDeco[1].iY), metrics.iStrikeY);
+        QCOMPARE(vecDeco[1].uColor, PackColor(expected));    // 취소선: 글자색을 따른다
+    }
+
+    // 순서: 반전 -> 선택 -> 대비 -> 흐리게. 흐린 글자는 고친 글자색을 배경과 반씩 섞어 여전히 보통 글자보다 흐리다
+    void minContrastComesBeforeFaint()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        TerminalFrame frame = MakeFrame(3, 1);
+        Cell(frame, 0, 0).uCodepoint = 'A';
+        Cell(frame, 0, 0).fg = DARK_BLUE;
+        Cell(frame, 0, 1).uCodepoint = 'B';
+        Cell(frame, 0, 1).fg = DARK_BLUE;
+        Cell(frame, 0, 1).bFaint = true;
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        const auto vecGlyph = Glyphs(list);
+        QCOMPARE(int(vecGlyph.size()), 2);
+        const TerminalRgb normal = EnsureContrast(DARK_BLUE, FRAME_BG, MIN_CONTRAST);
+        const TerminalRgb faint = MixHalf(normal, FRAME_BG);
+        QCOMPARE(vecGlyph[0].uColor, PackColor(normal));
+        QCOMPARE(vecGlyph[1].uColor, PackColor(faint));
+        QVERIFY(GetContrastRatio(faint, FRAME_BG) < GetContrastRatio(normal, FRAME_BG));
+        QVERIFY(GetContrastRatio(faint, FRAME_BG) > GetContrastRatio(MixHalf(DARK_BLUE, FRAME_BG), FRAME_BG));   // 끈 때보다는 읽힌다
+        // 흐린 글자의 대비가 원래 충분하면(고칠 것 없음) 끈 때와 같다
+        Cell(frame, 0, 2).uCodepoint = 'C';
+        Cell(frame, 0, 2).bFaint = true;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        QCOMPARE(Glyphs(list)[2].uColor, PackColor(MixHalf(FRAME_FG, FRAME_BG)));
+    }
+
+    // 선택 칸은 선택 배경(과 선택 글자색)으로 대비를 잰다
+    void minContrastUsesSelectionColors()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        const int iW = cache.GetMetrics().iCellWidth;
+        const TerminalRgb gray{140, 150, 160};   // FRAME_BG 위 6.2, 선택 배경(50,60,70) 위 3.7
+        TerminalFrame frame = MakeFrame(3, 1);
+        Cell(frame, 0, 0).uCodepoint = 'A';
+        Cell(frame, 0, 0).fg = gray;
+        Cell(frame, 0, 1).uCodepoint = 'B';
+        Cell(frame, 0, 1).fg = gray;
+        frame.vecRows[0].iSelectBegin = 1;
+        frame.vecRows[0].iSelectEnd = 2;
+        TerminalTheme theme = MakeContrastTheme(MIN_CONTRAST);
+        QVERIFY(GetContrastRatio(gray, FRAME_BG) >= MIN_CONTRAST);
+        QVERIFY(GetContrastRatio(gray, theme.selectionBg) < MIN_CONTRAST);
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, theme));
+        QCOMPARE(FindGlyphAt(Glyphs(list), 0, iW)->uColor, PackColor(gray));
+        QCOMPARE(FindGlyphAt(Glyphs(list), 1, iW)->uColor, PackColor(EnsureContrast(gray, theme.selectionBg, MIN_CONTRAST)));
+        QVERIFY(FindGlyphAt(Glyphs(list), 1, iW)->uColor != PackColor(gray));
+        QCOMPARE(Backgrounds(list)[0].uColor, PackColor(theme.selectionBg));   // 배경은 그대로
+
+        const TerminalRgb selectionFg{60, 70, 80};
+        theme.optSelectionFg = selectionFg;
+        QVERIFY(BuildThemed(list, frame, cache, theme));
+        QCOMPARE(FindGlyphAt(Glyphs(list), 1, iW)->uColor, PackColor(EnsureContrast(selectionFg, theme.selectionBg, MIN_CONTRAST)));
+    }
+
+    // 반전한 칸은 바꾼 뒤의 글자색(원래 배경색)을 바꾼 뒤의 배경(원래 글자색)에 맞춘다
+    void minContrastAfterInverse()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        TerminalFrame frame = MakeFrame(2, 1);
+        TerminalCell& cell = Cell(frame, 0, 0);
+        cell.uCodepoint = 'A';
+        cell.fg = TerminalRgb{40, 40, 40};
+        cell.bg = TerminalRgb{20, 20, 20};
+        cell.bBgDefault = false;
+        cell.bInverse = true;
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        QCOMPARE(Backgrounds(list)[0].uColor, PackColor(TerminalRgb{40, 40, 40}));
+        const TerminalRgb expected = EnsureContrast(TerminalRgb{20, 20, 20}, TerminalRgb{40, 40, 40}, MIN_CONTRAST);
+        QVERIFY(expected != (TerminalRgb{20, 20, 20}));
+        QCOMPARE(Glyphs(list)[0].uColor, PackColor(expected));
+    }
+
+    // 블록 커서 위 글자(칸의 배경색으로 그린다)도 커서 색에 대해 같은 규칙을 따른다
+    void minContrastBlockCursorGlyph()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        const CellMetrics& metrics = cache.GetMetrics();
+        const TerminalRgb cursorColor{40, 40, 50};   // FRAME_BG 와 대비 1.3
+        TerminalFrame frame = MakeFrame(3, 1);
+        Cell(frame, 0, 1).uCodepoint = 'A';
+        frame.cursor = TerminalCursor{true, false, ECursorShape::BLOCK, 1, 0, false, cursorColor};
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(1.0)));
+        auto vecDeco = Decorations(list);
+        QCOMPARE(int(vecDeco.size()), 2);
+        QCOMPARE(vecDeco[1].uColor, PackColor(FRAME_BG));   // 끄면 칸의 배경색 그대로
+
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        vecDeco = Decorations(list);
+        QCOMPARE(int(vecDeco.size()), 2);
+        QCOMPARE(vecDeco[0].uColor, PackColor(cursorColor));   // 커서 사각형은 그대로
+        const TerminalRgb expected = EnsureContrast(FRAME_BG, cursorColor, MIN_CONTRAST);
+        QVERIFY(expected != FRAME_BG);
+        QCOMPARE(vecDeco[1].eKind, EQuadKind::GLYPH_MONO);
+        QCOMPARE(vecDeco[1].uColor, PackColor(expected));
+        QCOMPARE(FindGlyphAt(Glyphs(list), 1, metrics.iCellWidth)->uColor, PackColor(FRAME_FG));   // 행의 글자는 FRAME_BG 위라 충분
+
+        // 막대 커서는 글자를 다시 그리지 않는다
+        frame.cursor.eShape = ECursorShape::BAR;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        QCOMPARE(int(Decorations(list).size()), 1);
+    }
+
+    // 숨김 칸(글자 없음, 취소선은 원래 색), 상자 · 블록 문자, Powerline 모양은 고치지 않는다
+    void minContrastSkipsInvisibleAndShapes()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        const CellMetrics& metrics = cache.GetMetrics();
+        const int iW = metrics.iCellWidth;
+        TerminalFrame frame = MakeFrame(8, 1);
+        const char32_t arrCodepoints[] = {U'A', U'─', U'▀', U'█', U'\uE0B0', U'B'};   // U+E0B0: Powerline 구분선
+        for (int iCol = 0; iCol < int(std::size(arrCodepoints)); ++iCol)
+        {
+            TerminalCell& cell = Cell(frame, 0, iCol);
+            cell.uCodepoint = arrCodepoints[iCol];
+            cell.fg = DARK_BLUE;
+            cell.bStrikethrough = true;
+        }
+        Cell(frame, 0, 0).bInvisible = true;
+        Cell(frame, 0, 2).bBgDefault = false;   // 반칸 화소: 위 DARK_BLUE, 아래 (0,0,120)
+        Cell(frame, 0, 2).bg = TerminalRgb{0, 0, 120};
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        const auto vecGlyph = Glyphs(list);
+        const auto vecDeco = Decorations(list);
+        QVERIFY(!FindGlyphAt(vecGlyph, 0, iW));   // 숨김: 글리프 없음
+        QCOMPARE(FindStrikeAt(vecDeco, 0, metrics)->uColor, PackColor(DARK_BLUE));
+        for (int iCol = 1; iCol <= 3; ++iCol)
+        {
+            QVERIFY2(FindGlyphAt(vecGlyph, iCol, iW), qPrintable(QString::number(iCol)));
+            QCOMPARE(FindGlyphAt(vecGlyph, iCol, iW)->uColor, PackColor(DARK_BLUE));
+            QCOMPARE(FindStrikeAt(vecDeco, iCol, metrics)->uColor, PackColor(DARK_BLUE));
+        }
+        QCOMPARE(FindStrikeAt(vecDeco, 4, metrics)->uColor, PackColor(DARK_BLUE));   // Powerline(글꼴에 없으면 글리프는 비어도 취소선은 있다)
+        const TerminalRgb expected = EnsureContrast(DARK_BLUE, FRAME_BG, MIN_CONTRAST);
+        QCOMPARE(FindGlyphAt(vecGlyph, 5, iW)->uColor, PackColor(expected));   // 보통 글자는 고친다
+        QCOMPARE(FindStrikeAt(vecDeco, 5, metrics)->uColor, PackColor(expected));
+    }
+
+    // 컬러 글리프(이모지 RGBA)는 글자색을 쓰지 않는다(불투명 흰색 기록)
+    void minContrastLeavesColorGlyphs()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        TerminalFrame frame = MakeFrame(4, 1);
+        Cell(frame, 0, 0).uCodepoint = 0x1F600;
+        Cell(frame, 0, 0).eWidth = ECellWidth::WIDE;
+        Cell(frame, 0, 0).fg = DARK_BLUE;
+        Cell(frame, 0, 1).eWidth = ECellWidth::SPACER_TAIL;
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        const auto vecGlyph = Glyphs(list);
+        QCOMPARE(int(vecGlyph.size()), 1);
+        if (vecGlyph[0].eKind != EQuadKind::GLYPH_COLOR)
+        {
+            // 컬러 이모지 글꼴이 없으면(offscreen) 흑백 글리프다: 글자처럼 고친다
+            QCOMPARE(vecGlyph[0].uColor, PackColor(EnsureContrast(DARK_BLUE, FRAME_BG, MIN_CONTRAST)));
+            QSKIP("no color emoji font (QT_QPA_PLATFORM=windows runs the color glyph check)");
+        }
+        QCOMPARE(vecGlyph[0].uColor, 0xFFFFFFFFu);
+    }
+
+    void minContrastAppliesToPreedit()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        TerminalFrame frame = MakeFrame(6, 1);
+        frame.cursor = TerminalCursor{true, false, ECursorShape::BLOCK, 1, 0, false, std::nullopt};
+        TerminalPreedit preedit;
+        TerminalCell cell;
+        cell.uCodepoint = 'p';
+        cell.fg = DARK_BLUE;
+        preedit.vecCells = {cell};
+        preedit.iCaretCell = 1;
+        frame.optPreedit = preedit;
+        DrawList list;
+        QVERIFY(BuildThemed(list, frame, cache, MakeContrastTheme(MIN_CONTRAST)));
+        int iGlyphs = 0;
+        for (const DrawQuad& quad : Decorations(list))
+        {
+            if (quad.eKind == EQuadKind::RECT)
+                continue;
+            ++iGlyphs;
+            QCOMPARE(quad.uColor, PackColor(EnsureContrast(DARK_BLUE, FRAME_BG, MIN_CONTRAST)));
+        }
+        QCOMPARE(iGlyphs, 1);
+    }
+
+    // 값만 바꿔도 테마가 달라 행 캐시를 버린다(렌더 스레드의 SetTheme 도 같은 비교로 다시 그린다)
+    void minContrastChangeDropsRowCache()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        TerminalFrame full = MakeFrame(3, 2);
+        Cell(full, 0, 0).uCodepoint = 'A';
+        Cell(full, 0, 0).fg = DARK_BLUE;
+        DrawListBuilder builder;
+        DrawList list;
+        DrawListBuildStats stats;
+        QCOMPARE(builder.Build(full, MakeContrastTheme(1.0), true, true, 0, cache, list, stats), EBuildResult::OK);
+        QCOMPARE(builder.Build(MakePartial(full), MakeContrastTheme(1.0), true, true, 0, cache, list, stats), EBuildResult::OK);
+        QCOMPARE(builder.Build(MakePartial(full), MakeContrastTheme(MIN_CONTRAST), true, true, 0, cache, list, stats),
+                 EBuildResult::NEED_FULL_FRAME);
+        QVERIFY(builder.NeedsFullFrame());
+        QCOMPARE(builder.Build(full, MakeContrastTheme(MIN_CONTRAST), true, true, 0, cache, list, stats), EBuildResult::OK);
+        QVERIFY(list.bFullRedraw);
+        QCOMPARE(Glyphs(list)[0].uColor, PackColor(EnsureContrast(DARK_BLUE, FRAME_BG, MIN_CONTRAST)));
+        QCOMPARE(builder.Build(MakePartial(full), MakeContrastTheme(MIN_CONTRAST), true, true, 0, cache, list, stats), EBuildResult::OK);
+        QCOMPARE(builder.Build(MakePartial(full), MakeContrastTheme(7.0), true, true, 0, cache, list, stats),
+                 EBuildResult::NEED_FULL_FRAME);
+    }
+
+    // 같은 입력이면 같은 목록: 새 빌더 · 캐시가 찬 빌더 · 다시 만든 빌더. 글자마다 EnsureContrast 와 같다
+    void minContrastIsDeterministic()
+    {
+        GlyphCache cache(BaseFont(), 1.0);
+        constexpr int kCols = 60;
+        constexpr int kRows = 12;
+        TerminalFrame frame = MakeFrame(kCols, kRows);
+        std::mt19937 rng(12345);
+        const TerminalRgb arrBackgrounds[] = {FRAME_BG, {40, 40, 40}, {250, 250, 250}, {0, 0, 120}};
+        for (int iRow = 0; iRow < kRows; ++iRow)
+        {
+            for (int iCol = 0; iCol < kCols; ++iCol)
+            {
+                TerminalCell& cell = Cell(frame, iRow, iCol);
+                cell.uCodepoint = uint32_t('a' + rng() % 26);
+                cell.fg = TerminalRgb{uint8_t(rng() % 96), uint8_t(rng() % 96), uint8_t(rng() % 256)};
+                const TerminalRgb& bg = arrBackgrounds[rng() % std::size(arrBackgrounds)];
+                cell.bBgDefault = bg == FRAME_BG;
+                cell.bg = cell.bBgDefault ? SENTINEL_BG : bg;
+            }
+        }
+        DrawListBuilder builder;
+        DrawList first;
+        DrawListBuildStats stats;
+        const TerminalTheme theme = MakeContrastTheme(MIN_CONTRAST);
+        QCOMPARE(builder.Build(frame, theme, true, true, 0, cache, first, stats), EBuildResult::OK);
+        DrawList second;
+        QCOMPARE(builder.Build(frame, theme, true, true, 0, cache, second, stats), EBuildResult::OK);
+        DrawList fresh;
+        QVERIFY(BuildThemed(fresh, frame, cache, theme));
+        QVERIFY(SameQuads(first, second));
+        QVERIFY(SameQuads(first, fresh));
+
+        int iAdjusted = 0;
+        const auto vecGlyph = Glyphs(first);
+        for (const DrawQuad& quad : vecGlyph)
+        {
+            const int iCol = GetGlyphColumn(quad, cache.GetMetrics().iCellWidth);
+            const TerminalCell& cell = frame.vecRows[size_t(quad.iRow)].vecCells[size_t(iCol)];
+            const TerminalRgb bg = cell.bBgDefault ? FRAME_BG : cell.bg;
+            const TerminalRgb expected = EnsureContrast(cell.fg, bg, MIN_CONTRAST);
+            QCOMPARE(quad.uColor, PackColor(expected));
+            QVERIFY(GetContrastRatio(UnpackColor(quad.uColor), bg) >= MIN_CONTRAST);
+            iAdjusted += expected != cell.fg ? 1 : 0;
+        }
+        QVERIFY(int(vecGlyph.size()) > kCols * kRows / 2);
+        QVERIFY(iAdjusted > int(vecGlyph.size()) / 4);
     }
 };
 

@@ -7,6 +7,7 @@
 #include "TerminalViewer/Algorithm/TerminalRenderer/TerminalPlatform.h"
 #include "TerminalViewer/Thread/Channel.h"
 
+#include <QPointer>
 #include <QThread>
 #include <QtDebug>
 
@@ -145,7 +146,11 @@ private:
 };
 }
 
-enum class ETerminalRenderCommand { ATTACH, DETACH, RESIZE, VISIBLE, FOCUS, WAKE, SCROLL, REFRESH_RATE, FONT, THEME, FORGET_SOURCE };
+// PATCH_RECEIVED: GUI 스레드가 그 화면의 CPU 조각(FrameReady)을 받았다. 렌더 스레드는 받지 않은 조각이 있는 화면을 그리지 않는다(CPU 역압)
+enum class ETerminalRenderCommand
+{
+    ATTACH, DETACH, RESIZE, VISIBLE, FOCUS, WAKE, SCROLL, REFRESH_RATE, FONT, THEME, FORGET_SOURCE, PATCH_RECEIVED
+};
 
 struct TerminalRenderCommand
 {
@@ -166,6 +171,20 @@ struct TerminalRenderCommand
 
 struct TerminalRenderShared
 {
+    // 렌더 스레드: 그 화면에 캡처에 반영하지 않은 Wake 가 있었는지 보고 지운다(아래 hashWakePending)
+    bool TakeWakePending(int viewId)
+    {
+        std::lock_guard<std::mutex> lock(mtxWakes);
+        const auto it = hashWakePending.find(viewId);
+        if (it == hashWakePending.end())
+        {
+            return false;
+        }
+        const bool bPending = it->second;
+        it->second = false;
+        return bPending;
+    }
+
     TerminalViewer::Channel<TerminalRenderCommand> channel;
     std::atomic<bool> bStopRequested{ false };
     std::atomic<bool> bStatsEnabled{ false };
@@ -174,6 +193,11 @@ struct TerminalRenderShared
     TerminalGpuStrategyFactory funcGpuFactory;   // Start 전에만 바꾼다(빈 함수 = 기본)
     mutable std::mutex mtxGpuError;
     QString strGpuError;
+    // Wake 합치기(주기당 한 번): 붙은 화면 id → 렌더 스레드가 아직 캡처에 반영하지 않은 Wake 가 있다.
+    // 참인 동안 오는 Wake 는 채널에 넣지 않는다(렌더 스레드를 깨우지 않는다). 렌더 스레드가 그 화면을 캡처하기 직전에 거짓으로 돌린다.
+    // GUI 스레드가 붙일 때 넣고 뗄 때·멈출 때 지운다. 없는 id 의 Wake 는 그대로 채널에 넣는다.
+    std::mutex mtxWakes;
+    std::unordered_map<int, bool> hashWakePending;
 };
 
 namespace
@@ -309,7 +333,8 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::Run()
             break;
         }
 
-        // 3) 다음 할 일(애니메이션·깜빡임·재시도 마감)까지, 마감이 없으면 명령이 올 때까지 기다린다.
+        // 3) 다음 할 일(미뤄 둔 깨움·애니메이션·깜빡임·재시도 마감)까지, 마감이 없으면 명령이 올 때까지 기다린다.
+        //    받지 않은 조각이 있는 화면은 마감을 내지 않는다(GUI 의 PATCH_RECEIVED 명령이 깨운다).
         const std::optional<qint64> optDeadline = scheduler.NextDeadline(NowNs());
 #ifdef Q_OS_WIN
         timerResolution.SetFine(optDeadline && *optDeadline - NowNs() < kFineTimerDeadlineNs);
@@ -383,6 +408,9 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::Apply(TerminalR
         break;
     case ETerminalRenderCommand::FORGET_SOURCE:
         hashSurfaceLosses.erase(command.pSource);   // 주인이 놓을 공급원: 같은 주소의 새 공급원이 옛 셈을 이어받지 않게
+        break;
+    case ETerminalRenderCommand::PATCH_RECEIVED:
+        scheduler.OnPatchReceived(command.iViewId);   // 뗀 화면(모르는 id)이면 무시: 받지 않은 조각 수는 뗄 때 함께 버렸다
         break;
     }
 }
@@ -562,7 +590,7 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::Wake(int viewId
         view.llWakeNs = wakeNs;
     }
     view.bRebuildOnRetry = view.bRebuildOnRetry || view.bPendingExecute;
-    scheduler.OnWake(viewId);
+    scheduler.OnWake(viewId, wakeNs);   // Wake 를 부른 시각: 렌더 스레드가 늦게 꺼내도 마감 전에 온 깨움으로 본다
 }
 
 void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::ScrollPixels(int viewId, double pixels)
@@ -574,15 +602,17 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::ScrollPixels(in
     }
     View& view = it->second;
     // 애니메이터의 시각을 지금으로 맞춘 뒤 목표를 옮긴다(오래 쉬다 온 입력이 한 번에 뛰지 않게).
-    view.iPendingLines += view.animator.Advance(NowNs(), view.spCache->GetMetrics().iCellHeight);
+    const qint64 llNow = NowNs();
+    view.iPendingLines += view.animator.Advance(llNow, view.spCache->GetMetrics().iCellHeight);
     view.animator.AddPixels(pixels);
     view.bRebuildOnRetry = view.bRebuildOnRetry || view.bPendingExecute;
-    scheduler.OnWake(viewId);
+    scheduler.OnWake(viewId, llNow);
 }
 
 void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::SetRefreshRate(int viewId, double hz)
 {
-    // 주사율은 GUI 스레드가 QScreen::refreshRate() 로 얻어 넘긴다. 렌더 스레드는 화면에 묻지 않는다(스펙 §5).
+    // 주사율은 GUI 스레드가 ScreenRefreshRate(TerminalPlatform.h: Windows 는 모니터의 정확한 값, 그 밖은 QScreen::refreshRate())로
+    // 얻어 넘긴다(TerminalSurface). 렌더 스레드는 화면에 묻지 않는다(스펙 §5).
     if (!mapViews.count(viewId) || !(hz > 0.0))
     {
         return;
@@ -695,9 +725,12 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::RenderView(int 
     const qint64 llNow = NowNs();
     if (!upRenderer->IsReady(viewId))
     {
-        scheduler.OnNotReady(viewId);
+        scheduler.OnNotReady(viewId, llNow);
         return;
     }
+    // 이제 캡처할 수 있다: 합쳐 둔 Wake 를 거둔다. 이 뒤에 오는 Wake 는 다시 채널로 와서 렌더 스레드를 깨운다.
+    // 참이면 마지막 캡처 뒤에 새 상태가 있다(채널로 오지 않은 Wake 포함).
+    const bool bWokenSinceCapture = pShared->TakeWakePending(viewId);
     // 이전 Execute 가 bNotReady 였으면 그 목록은 아직 표시되지 않았다: 다시 만들더라도 이번에는 바뀐 것이 없어도 표시한다.
     bool bMustPresent = false;
     if (view.bPendingExecute)
@@ -708,7 +741,8 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::RenderView(int 
             view.builder.Invalidate();
             view.bHasBuilt = false;
         }
-        else if (!view.bRebuildOnRetry && view.bFocused == view.bBuiltFocused && scheduler.IsBlinkOn(viewId, llNow) == view.bBuiltBlinkOn)
+        else if (!view.bRebuildOnRetry && !bWokenSinceCapture && view.bFocused == view.bBuiltFocused &&
+                 scheduler.IsBlinkOn(viewId, llNow) == view.bBuiltBlinkOn)
         {
             // 기다리는 동안 바뀐 것이 없다: 캡처 없이 같은 목록으로 다시 그린다.
             Present(viewId, view, llNow, view.pendingStats);
@@ -813,7 +847,7 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::Present(int vie
         view.bPendingExecute = true;
         ++stats.iNotReadyRetries;
         view.pendingStats = stats;
-        scheduler.OnNotReady(viewId);
+        scheduler.OnNotReady(viewId, stats.llExecuteEndNs);
         return;
     }
     view.bPendingExecute = false;
@@ -848,7 +882,10 @@ void TerminalRenderThreadWorker::TerminalRenderThreadWorkerImpl::Present(int vie
         if (!output.imgPatch.isNull())
         {
             // CPU 화면의 조각. QImage 는 암시적 공유라 큐 신호로 넘겨도 픽셀을 복사하지 않는다.
+            // GUI 가 받을 때까지(PATCH_RECEIVED) 이 화면은 그리지 않는다: GUI 가 바쁘면 조각이 쌓이지 않고 그릴 일만 남는다.
+            // 다음 조각은 그 사이 캡처·합성하지 않았으므로 마지막으로 합성한 뒤 바뀐 줄을 모두 덮는다(행 캐시·공급원의 바뀐 줄이 함께 쌓인다).
             emit pWorker->FrameReady(viewId, output.imgPatch, output.rectPatch);
+            scheduler.OnPatchSent(viewId);
         }
         if (pShared->bStatsEnabled)
         {
@@ -970,6 +1007,13 @@ public:
         usetAttached.erase(viewId);
     }
 
+    // 뗀 화면의 Wake 합치기 상태를 지운다(그 id 의 늦은 Wake 는 채널로 간다)
+    void ForgetWakePending(int viewId)
+    {
+        std::lock_guard<std::mutex> lock(shared.mtxWakes);
+        shared.hashWakePending.erase(viewId);
+    }
+
     void TrackSource(int viewId, ITerminalFrameSource* pSource)
     {
         if (!pSource)
@@ -1031,24 +1075,33 @@ public:
         return EraseIfUnusedLocked(itSource);
     }
 
-    // Stop 이 끝났다: 렌더 스레드는 어느 공급원도 더 쓰지 않는다. 잡혀 있지 않은 공급원을 돌려준다(잡힌 것은 놓을 때 알린다)
-    std::vector<ITerminalFrameSource*> ReleaseAllSources()
+    // Stop 이 끝났다: 렌더 스레드는 어느 공급원도 더 쓰지 않는다. 모든 화면의 셈을 0 으로 한다. 공급원 항목은 남긴다:
+    // 쓰는 쪽이 없는 항목은 TakeUnusedSource 가 하나씩 꺼내 알린다(알리기 전에 다시 잡히거나 붙으면 쓰이는 채로 남는다)
+    void ReleaseAllViews()
     {
         std::lock_guard<std::mutex> lock(mtxState);
-        std::vector<ITerminalFrameSource*> vecSources;
         hashViewSources.clear();
-        for (auto itSource = hashSourceUses.begin(); itSource != hashSourceUses.end();)
+        for (auto& [pSource, use] : hashSourceUses)
         {
-            itSource->second.iViews = 0;
-            if (itSource->second.iHolds > 0)
-            {
-                ++itSource;
-                continue;
-            }
-            vecSources.push_back(itSource->first);
-            itSource = hashSourceUses.erase(itSource);
+            Q_UNUSED(pSource);
+            use.iViews = 0;
         }
-        return vecSources;
+    }
+
+    // 쓰는 쪽(붙은 화면 · 잡은 쪽)이 없는 공급원 하나를 지우고 돌려준다. 없으면 nullptr
+    ITerminalFrameSource* TakeUnusedSource()
+    {
+        std::lock_guard<std::mutex> lock(mtxState);
+        for (auto itSource = hashSourceUses.begin(); itSource != hashSourceUses.end(); ++itSource)
+        {
+            if (itSource->second.iViews == 0 && itSource->second.iHolds == 0)
+            {
+                ITerminalFrameSource* pSource = itSource->first;
+                hashSourceUses.erase(itSource);
+                return pSource;
+            }
+        }
+        return nullptr;
     }
 
     // 렌더 스레드가 그 공급원에 대해 기억한 것(surface 잃은 셈)을 지운다
@@ -1067,13 +1120,26 @@ public:
             return;
         }
         // 화면별 신호는 GUI 쪽에서 이미 뗀 화면이면 버린다(떼기 전에 렌더 스레드가 낸 늦은 신호).
+        // 조각을 받은 이 자리(GUI 스레드)가 렌더 스레드에 "받았다" 를 알린다(CPU 역압). 렌더 스레드는 그때의 최신 상태를 그린다.
+        // 뗀 화면의 조각도 알린다(렌더 스레드는 모르는 id 를 무시한다).
+        // 받는 슬롯(직접 연결)이 그 자리에서 TerminalRenderThread 를 지울 수 있다: 그러면 this(Impl)와 채널도 사라졌으므로
+        // emit 뒤에는 가드로 살아 있는지 보고, 지워졌으면 아무것도 쓰지 않는다(지우면서 Stop 이 렌더 스레드를 멈췄다).
         QObject::connect(worker.get(), &TerminalRenderThreadWorker::FrameReady, q_ptr,
                          [this, q_ptr](int viewId, const QImage& imgPatch, const QRect& rectPatch)
                          {
                              if (IsAttached(viewId))
                              {
+                                 const QPointer<TerminalRenderThread> pGuard(q_ptr);
                                  emit q_ptr->FrameReady(viewId, imgPatch, rectPatch);
+                                 if (!pGuard)
+                                 {
+                                     return;
+                                 }
                              }
+                             TerminalRenderCommand command;
+                             command.eType = ETerminalRenderCommand::PATCH_RECEIVED;
+                             command.iViewId = viewId;
+                             shared.channel.Push(std::move(command));
                          });
         QObject::connect(worker.get(), &TerminalRenderThreadWorker::FrameStats, q_ptr,
                          [this, q_ptr](const TerminalFrameStats& stats)
@@ -1100,11 +1166,20 @@ public:
                              }
                          });
         QObject::connect(worker.get(), &TerminalRenderThreadWorker::StrategyChanged, q_ptr, &TerminalRenderThread::StrategyChanged);
+        // ViewDetached 를 먼저 내고 그 화면의 셈은 슬롯이 끝난 뒤 내린다: 슬롯 안에서는 뗀 화면이 아직 공급원을 쓰는 것으로 센다.
+        // - 슬롯이 TerminalRenderThread 를 지우면 this(Impl)도 사라졌으므로 아무것도 쓰지 않는다. 지우면서 Stop 이 아직 센 이 공급원까지
+        //   SourceReleased 로 냈다(공급원마다 한 번).
+        // - 슬롯이 같은 공급원을 다시 붙이거나 잡으면 그 공급원은 쓰이는 채로 남는다(먼저 내리면 쓰이는데도 SourceReleased 가 나간다).
         QObject::connect(worker.get(), &TerminalRenderThreadWorker::ViewDetached, q_ptr,
                          [this, q_ptr](int viewId)
                          {
-                             ITerminalFrameSource* pReleased = ReleaseSourceOf(viewId);
+                             const QPointer<TerminalRenderThread> pGuard(q_ptr);
                              emit q_ptr->ViewDetached(viewId);
+                             if (!pGuard)
+                             {
+                                 return;
+                             }
+                             ITerminalFrameSource* pReleased = ReleaseSourceOf(viewId);
                              if (pReleased)
                              {
                                  ForgetSourceOnRenderThread(pReleased);
@@ -1140,6 +1215,10 @@ public:
         bRunning = false;
         // 스레드가 끝난 뒤 남은 명령: 붙이려던 핸들을 놓고 분리를 기다리는 쪽을 깨운다.
         DiscardPending(shared.channel);
+        {
+            std::lock_guard<std::mutex> lock(shared.mtxWakes);
+            shared.hashWakePending.clear();
+        }
         std::lock_guard<std::mutex> lock(mtxState);
         usetAttached.clear();
     }
@@ -1194,9 +1273,20 @@ void TerminalRenderThread::Stop()
     m_pimpl->stopWorker();
     // 스레드가 끝났다: 잡혀 있지 않은 공급원을 모두 알린다(이 뒤에 오는 늦은 ViewDetached 는 다시 알리지 않는다).
     // 렌더 스레드의 기억(surface 잃은 셈)은 워커와 함께 사라졌다.
-    for (ITerminalFrameSource* pSource : m_pimpl->ReleaseAllSources())
+    // 알릴 공급원은 셈(hashSourceUses)에서 하나씩 꺼낸다. 슬롯이
+    // - 이 객체를 지우면: 소멸자가 부른 Stop 이 남은 것을 이어서 알린다. 그 뒤 이 루프는 this 를 쓰지 않고 돌아간다.
+    // - Stop 을 다시 부르면: 그 Stop 이 남은 것을 알리고, 이 루프는 꺼낼 것이 없어 끝난다.
+    // - 아직 알리지 않은 공급원을 잡거나 붙이면: 그 공급원은 쓰이는 채로 남아 이번에는 알리지 않는다(놓거나 다시 멈출 때 한 번).
+    // 그래서 공급원마다 정확히 한 번 알린다.
+    m_pimpl->ReleaseAllViews();
+    const QPointer<TerminalRenderThread> pGuard(this);
+    while (ITerminalFrameSource* pSource = m_pimpl->TakeUnusedSource())
     {
         emit SourceReleased(pSource);
+        if (!pGuard)
+        {
+            return;
+        }
     }
 }
 
@@ -1235,6 +1325,10 @@ int TerminalRenderThread::AttachView(ITerminalFrameSource* pSource, const Termin
         std::lock_guard<std::mutex> lock(m_pimpl->mtxState);
         m_pimpl->usetAttached.insert(iViewId);
     }
+    {
+        std::lock_guard<std::mutex> lock(m_pimpl->shared.mtxWakes);
+        m_pimpl->shared.hashWakePending[iViewId] = false;
+    }
     m_pimpl->TrackSource(iViewId, pSource);
     TerminalRenderCommand command;
     command.eType = ETerminalRenderCommand::ATTACH;
@@ -1250,6 +1344,7 @@ int TerminalRenderThread::AttachView(ITerminalFrameSource* pSource, const Termin
 void TerminalRenderThread::DetachView(int viewId)
 {
     m_pimpl->Forget(viewId);
+    m_pimpl->ForgetWakePending(viewId);
     TerminalRenderCommand command;
     command.eType = ETerminalRenderCommand::DETACH;
     command.iViewId = viewId;
@@ -1259,6 +1354,7 @@ void TerminalRenderThread::DetachView(int viewId)
 bool TerminalRenderThread::DetachViewAndWait(int viewId, int timeoutMs)
 {
     m_pimpl->Forget(viewId);
+    m_pimpl->ForgetWakePending(viewId);
     auto spAck = std::make_shared<DetachAck>();
     TerminalRenderCommand command;
     command.eType = ETerminalRenderCommand::DETACH;
@@ -1303,6 +1399,19 @@ void TerminalRenderThread::SetFocus(int viewId, bool focused)
 
 void TerminalRenderThread::Wake(int viewId)
 {
+    {
+        // 렌더 스레드가 아직 캡처에 반영하지 않은 Wake 가 있으면 합친다: 다음 캡처가 이 바뀜도 본다(채널에 넣지 않아 깨우지 않는다).
+        std::lock_guard<std::mutex> lock(m_pimpl->shared.mtxWakes);
+        const auto it = m_pimpl->shared.hashWakePending.find(viewId);
+        if (it != m_pimpl->shared.hashWakePending.end())
+        {
+            if (it->second)
+            {
+                return;
+            }
+            it->second = true;
+        }
+    }
     TerminalRenderCommand command;
     command.eType = ETerminalRenderCommand::WAKE;
     command.iViewId = viewId;
